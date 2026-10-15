@@ -274,11 +274,12 @@ def generer_apercus() -> int:
 
 # ───────────────────────── Attribution automatique ─────────────────────────
 
-def attribuer(locuteurs: dict[str, dict[str, Any]]) -> dict[str, str]:
+def attribuer(locuteurs: dict[str, dict[str, Any]], exclues: set[str] | None = None) -> dict[str, str]:
     """Choisit pour chaque locuteur une voix différente de la bibliothèque, du même sexe et du
-    registre le plus proche de sa voix d'origine (f0_hz). Renvoie {code locuteur: id de voix}."""
+    registre le plus proche de sa voix d'origine (f0_hz). `exclues` : voix déjà prises par
+    d'autres locuteurs. Renvoie {code locuteur: id de voix}."""
     banque = lire_banque()
-    prises: set[str] = set()
+    prises: set[str] = set(exclues or ())
     choix: dict[str, str] = {}
     # Les locuteurs dont la voix est mesurée choisissent en premier
     for code, infos in sorted(locuteurs.items(), key=lambda kv: kv[1].get("f0_hz") is None):

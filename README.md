@@ -91,9 +91,22 @@ L'écran **Résultat** propose le comparateur avant/après, le téléchargement 
 
 ## Locuteurs et voix
 
-Après la transcription, VoxLingo **identifie qui parle** dans chaque phrase (empreinte vocale SpeechBrain ECAPA,
-regroupement automatique : le nombre de personnes est trouvé seul, sans compte en ligne) et mesure la hauteur de
-chaque voix. La page **Locuteurs** permet de renommer, fusionner, corriger le locuteur d'une phrase et choisir la voix :
+Après la transcription, VoxLingo **identifie automatiquement tous les locuteurs**, quelle que soit la vidéo :
+
+1. **pyannote.audio** (modèle gratuit `pyannote/speaker-diarization-community-1`), l'outil open source de référence,
+   trouve qui parle et quand, même quand les personnes se coupent la parole ;
+2. **registres de hauteur** : si une même voix joue plusieurs personnages (vidéos générées par IA, doublages),
+   ses répliques sont séparées par leur hauteur de voix (un garçon à 240 Hz, une fille à 400 Hz…) ;
+3. une phrase dite par plusieurs personnes est **découpée en répliques**, chacune avec son locuteur.
+
+pyannote demande, une seule fois, un compte gratuit sur huggingface.co : accepter les conditions de
+[pyannote/speaker-diarization-community-1](https://huggingface.co/pyannote/speaker-diarization-community-1),
+créer un jeton *Read* (Settings → Access Tokens) et l'écrire dans `.env` (`HF_TOKEN=…`, secret `HF_TOKEN` sur
+Kaggle/Colab). Sans jeton, une analyse locale (empreintes SpeechBrain ECAPA + hauteur de voix) prend le relais.
+
+Chaque locuteur reçoit ensuite **sa propre voix** : la sienne clonée, ou, s'il parle trop peu (moins de 3 s) pour
+être cloné, une voix de la bibliothèque différente de celles des autres et proche de sa hauteur de voix.
+La page **Locuteurs** permet de renommer, fusionner, corriger le locuteur d'une phrase et choisir la voix :
 
 - **voix d'origine clonée** (par défaut) ;
 - **voix de la bibliothèque** : 20 voix (4 enfants, 4 jeunes, 8 adultes, 4 seniors, femmes et hommes) ;

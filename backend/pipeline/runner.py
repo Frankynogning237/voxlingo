@@ -257,8 +257,14 @@ def _identifier_locuteurs(job_id: str, report: Callable[[float], None]) -> None:
 
     status = jobs.read_status(job_id)
     data = jobs.read_segments(job_id)
+    dossier = jobs.project_dir(job_id)
+    voix_isolee = dossier / "voix_isolee.wav"  # sans musique ni bruitages : hauteurs et empreintes plus nettes
+    # Avant la traduction, une phrase dite par plusieurs personnes est découpée en répliques ;
+    # après, on garde les phrases (et leurs traductions) telles quelles.
+    deja_traduit = any(s.get("traduction") for s in data["segments"])
     data["locuteurs"] = identifier_locuteurs(
-        data["segments"], jobs.project_dir(job_id) / "audio.wav", on_progress=_sous_progression(report, 0, 0.85)
+        data["segments"], voix_isolee if voix_isolee.is_file() else dossier / "audio.wav",
+        on_progress=_sous_progression(report, 0, 0.85), decouper=not deja_traduit,
     )
     _mesurer_locuteurs(job_id, data)
     _analyser_tons(job_id, data, _sous_progression(report, 0.85, 1.0))
@@ -308,16 +314,23 @@ def voix_des_locuteurs(job_id: str, data: dict) -> dict[str, str]:
     voix_isolee = folder / "voix_isolee.wav"
     source = voix_isolee if voix_isolee.is_file() else folder / status["fichier"]
 
+    locuteurs = jobs.locuteurs(data)
     resultat: dict[str, str] = {}
-    for code, infos in jobs.locuteurs(data).items():
+    prises = {infos["voix"] for infos in locuteurs.values() if infos["voix"] != "clone"}
+    for code, infos in locuteurs.items():
         choix = voice_bank.trouver(infos["voix"]) if infos["voix"] != "clone" else None
+        phrases = [s for s in data["segments"] if jobs.locuteur(s) == code]
+        if choix is None and sum(s["fin"] - s["debut"] for s in phrases) < REFERENCE_MIN_LOCUTEUR_S:
+            # Trop peu de parole pour cloner sa voix : une voix de la bibliothèque, différente de celles
+            # des autres locuteurs et proche de sa hauteur de voix (et non une voix commune à tous)
+            choix = voice_bank.trouver(voice_bank.attribuer({code: infos}, exclues=prises)[code])
+            if choix is not None:
+                logger.info("[%s] %s parle trop peu pour être cloné : voix %s", job_id, code, choix["nom"])
         if choix is not None:
+            prises.add(choix["id"])
             resultat[code] = voice_bank.spec(choix)
             continue
-        phrases = [s for s in data["segments"] if jobs.locuteur(s) == code]
         reference = dossier / f"reference_{code}.wav"
-        if sum(s["fin"] - s["debut"] for s in phrases) < REFERENCE_MIN_LOCUTEUR_S:
-            phrases, reference = data["segments"], dossier / "reference.wav"  # trop peu de parole : voix commune
         if not reference.is_file():
             extraire_reference(source, phrases, reference)
         resultat[code] = f"ref:{reference}"

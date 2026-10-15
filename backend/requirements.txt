@@ -14,4 +14,5 @@ scikit-learn>=1.4
 psutil>=5.9
 demucs>=4.0
 speechbrain>=1.0
+pyannote.audio>=4.0  # identification des locuteurs (jeton Hugging Face)
 pytest>=8
