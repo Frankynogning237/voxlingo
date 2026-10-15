@@ -1,6 +1,47 @@
-// Accès à l'API locale FastAPI (backend/main.py).
+// Accès à l'API FastAPI (backend/main.py) : sur ce PC, ou moteur distant (Kaggle/Colab) via un tunnel.
 
-export const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
+const CLE_MOTEUR = 'voxlingo.moteur'
+const CLE_ACCES = 'voxlingo.cle'
+
+function lire(cle: string): string | null {
+  try {
+    return localStorage.getItem(cle)
+  } catch {
+    return null
+  }
+}
+
+/** Lien envoyé par le carnet Kaggle/Colab : ?moteur=…&cle=… est enregistré puis retiré de l'adresse. */
+function lireLienConnexion() {
+  const params = new URLSearchParams(window.location.search)
+  const moteur = params.get('moteur')
+  if (!moteur) return
+  enregistrerConnexion(moteur, params.get('cle') ?? '')
+  window.history.replaceState(null, '', window.location.pathname + window.location.hash)
+}
+
+/** Enregistre l'adresse du moteur et sa clé d'accès (rechargez la page pour les appliquer). */
+export function enregistrerConnexion(moteur: string, cle: string) {
+  try {
+    localStorage.setItem(CLE_MOTEUR, moteur.trim().replace(/\/+$/, ''))
+    localStorage.setItem(CLE_ACCES, cle.trim())
+  } catch {
+    // stockage indisponible (navigation privée) : la connexion ne sera pas mémorisée
+  }
+}
+
+lireLienConnexion()
+
+export const API_URL_DEFAUT = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
+export const API_URL = lire(CLE_MOTEUR) || API_URL_DEFAUT
+export const CLE = lire(CLE_ACCES) ?? ''
+
+/** En-têtes ajoutés à chaque appel : la clé d'accès du moteur distant. */
+const entetes = (): Record<string, string> => (CLE ? { 'X-Cle-Acces': CLE } : {})
+
+/** Adresse d'un fichier chargé directement par le navigateur (vidéo, image, téléchargement) :
+ *  la clé passe dans l'adresse, car ces requêtes ne peuvent pas porter d'en-tête. */
+const fichier = (path: string) => `${API_URL}${path}${CLE ? `?cle=${encodeURIComponent(CLE)}` : ''}`
 
 export type Health = {
   status: string
@@ -114,7 +155,8 @@ export type Transcription = {
 }
 
 async function request<T>(path: string): Promise<T> {
-  const res = await fetch(`${API_URL}${path}`)
+  const res = await fetch(`${API_URL}${path}`, { headers: entetes() })
+  if (res.status === 401) throw new Error("Clé d'accès au moteur manquante ou incorrecte.")
   if (!res.ok) {
     const body = await res.json().catch(() => null)
     throw new Error(body?.detail ?? `Erreur serveur (${res.status})`)
@@ -126,25 +168,25 @@ export const getHealth = () => request<Health>('/health')
 export const listJobs = () => request<Job[]>('/jobs')
 export const getJob = (id: string) => request<Job>(`/jobs/${id}`)
 export const getSegments = (id: string) => request<Transcription>(`/jobs/${id}/segments`)
-export const videoUrl = (id: string) => `${API_URL}/jobs/${id}/video`
-export const thumbnailUrl = (id: string) => `${API_URL}/jobs/${id}/thumbnail`
-export const dubbedUrl = (id: string) => `${API_URL}/jobs/${id}/dubbed`
-export const downloadUrl = (id: string, quoi: 'download' | 'subtitles' | 'audio') => `${API_URL}/jobs/${id}/${quoi}`
-export const subtitlesVttUrl = (id: string) => `${API_URL}/jobs/${id}/subtitles.vtt`
-export const filmstripUrl = (id: string) => `${API_URL}/jobs/${id}/filmstrip`
+export const videoUrl = (id: string) => fichier(`/jobs/${id}/video`)
+export const thumbnailUrl = (id: string) => fichier(`/jobs/${id}/thumbnail`)
+export const dubbedUrl = (id: string) => fichier(`/jobs/${id}/dubbed`)
+export const downloadUrl = (id: string, quoi: 'download' | 'subtitles' | 'audio') => fichier(`/jobs/${id}/${quoi}`)
+export const subtitlesVttUrl = (id: string) => fichier(`/jobs/${id}/subtitles.vtt`)
+export const filmstripUrl = (id: string) => fichier(`/jobs/${id}/filmstrip`)
 export const getWaveform = (id: string) => request<number[]>(`/jobs/${id}/waveform`)
 
 export async function cancelJob(id: string): Promise<Job> {
-  const res = await fetch(`${API_URL}/jobs/${id}/annuler`, { method: 'POST' })
+  const res = await fetch(`${API_URL}/jobs/${id}/annuler`, { method: 'POST', headers: entetes() })
   if (!res.ok) throw new Error((await res.json().catch(() => null))?.detail ?? `Erreur serveur (${res.status})`)
   return res.json()
 }
 
-async function send<T>(path: string, method: string, body?: unknown): Promise<T> {
+async function send<T>(path: string, method: string, body?: unknown, form?: FormData): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, {
     method,
-    headers: body ? { 'Content-Type': 'application/json' } : undefined,
-    body: body ? JSON.stringify(body) : undefined,
+    headers: body ? { ...entetes(), 'Content-Type': 'application/json' } : entetes(),
+    body: form ?? (body ? JSON.stringify(body) : undefined),
   })
   if (!res.ok) {
     const data = await res.json().catch(() => null)
@@ -211,35 +253,63 @@ export const setStrategy = (id: string, strategie_duree: StrategieDuree) =>
 export const adjustTranslations = (id: string, ids?: number[]) =>
   send<Job>(`/jobs/${id}/ajuster`, 'POST', { ids: ids ?? null })
 
+/** Taille des morceaux d'envoi : les tunnels gratuits (Cloudflare) refusent les requêtes de plus de 100 Mo. */
+const MORCEAU = 50 * 1024 ** 2
+
 /**
- * Envoie la vidéo au serveur. XMLHttpRequest plutôt que fetch pour suivre
- * la progression de l'envoi (onProgress reçoit une valeur entre 0 et 1).
+ * Envoie une requête avec XMLHttpRequest (plutôt que fetch) pour suivre la progression de l'envoi.
  */
-export function createJob(
+function envoyer<T>(methode: string, path: string, corps: XMLHttpRequestBodyInit, onProgress: (e: ProgressEvent) => void): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open(methode, `${API_URL}${path}`)
+    for (const [nom, valeur] of Object.entries(entetes())) xhr.setRequestHeader(nom, valeur)
+    xhr.responseType = 'json'
+    xhr.upload.onprogress = onProgress
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) resolve(xhr.response as T)
+      else reject(new Error(xhr.response?.detail ?? `Erreur serveur (${xhr.status})`))
+    }
+    xhr.onerror = () => reject(new Error('Le moteur ne répond pas.'))
+    xhr.send(corps)
+  })
+}
+
+/**
+ * Envoie la vidéo au serveur et crée le projet (onProgress reçoit une valeur entre 0 et 1).
+ * Une grosse vidéo part en morceaux de 50 Mo, chacun retenté en cas de coupure.
+ */
+export async function createJob(
   video: File,
   langueCible: string,
   options: JobOptions,
   onProgress: (fraction: number) => void,
 ): Promise<Job> {
-  return new Promise((resolve, reject) => {
-    const form = new FormData()
-    form.append('video', video)
-    form.append('langue_cible', langueCible)
-    for (const [cle, valeur] of Object.entries(options)) form.append(cle, String(valeur))
+  const form = new FormData()
+  form.append('langue_cible', langueCible)
+  for (const [cle, valeur] of Object.entries(options)) form.append(cle, String(valeur))
 
-    const xhr = new XMLHttpRequest()
-    xhr.open('POST', `${API_URL}/jobs`)
-    xhr.responseType = 'json'
-    xhr.upload.onprogress = (e) => {
-      if (e.lengthComputable) onProgress(e.loaded / e.total)
+  if (video.size <= MORCEAU) {
+    form.append('video', video)
+    return envoyer<Job>('POST', '/jobs', form, (e) => e.lengthComputable && onProgress(e.loaded / e.total))
+  }
+
+  const { id } = await send<{ id: string }>('/televersements', 'POST')
+  for (let debut = 0; debut < video.size; debut += MORCEAU) {
+    const morceau = video.slice(debut, debut + MORCEAU)
+    for (let essai = 1; ; essai++) {
+      try {
+        await envoyer('PUT', `/televersements/${id}?debut=${debut}`, morceau, (e) => onProgress((debut + e.loaded) / video.size))
+        break
+      } catch (erreur) {
+        if (essai >= 4) throw erreur
+        await new Promise((r) => setTimeout(r, 2000 * essai))
+      }
     }
-    xhr.onload = () => {
-      if (xhr.status >= 200 && xhr.status < 300) resolve(xhr.response as Job)
-      else reject(new Error(xhr.response?.detail ?? `Erreur serveur (${xhr.status})`))
-    }
-    xhr.onerror = () => reject(new Error('Le serveur local ne répond pas.'))
-    xhr.send(form)
-  })
+  }
+  form.append('televersement', id)
+  form.append('nom_fichier', video.name)
+  return send<Job>('/jobs', 'POST', undefined, form)
 }
 
 // ───────────────────────── Locuteurs et bibliothèque de voix (phase 6) ─────────────────────────
@@ -285,12 +355,12 @@ export const setSegmentTone = (id: string, segId: number, ton: Ton) =>
   send<Transcription>(`/jobs/${id}/segments/${segId}/ton`, 'PUT', { ton })
 export const detectSpeakers = (id: string) => send<Job>(`/jobs/${id}/locuteurs/detecter`, 'POST')
 export const autoAssignVoices = (id: string) => send<Locuteur[]>(`/jobs/${id}/locuteurs/attribuer`, 'POST')
-export const speakerAudioUrl = (id: string, code: string, quoi: 'original' | 'doublee') => `${API_URL}/jobs/${id}/locuteurs/${code}/${quoi}`
-export const speakerAvatarUrl = (id: string, code: string) => `${API_URL}/jobs/${id}/locuteurs/${code}/avatar`
+export const speakerAudioUrl = (id: string, code: string, quoi: 'original' | 'doublee') => fichier(`/jobs/${id}/locuteurs/${code}/${quoi}`)
+export const speakerAvatarUrl = (id: string, code: string) => fichier(`/jobs/${id}/locuteurs/${code}/avatar`)
 
 export const listVoices = () => request<{ voix: Voix[]; apercus: { en_cours: boolean; erreur: string | null } }>('/voix')
 export const generatePreviews = () => send<{ en_cours: boolean }>('/voix/apercus', 'POST')
-export const voicePreviewUrl = (voixId: string) => `${API_URL}/voix/${voixId}/apercu`
+export const voicePreviewUrl = (voixId: string) => fichier(`/voix/${voixId}/apercu`)
 export const updateVoice = (voixId: string, modif: { nom?: string; sexe?: Sexe; age?: AgeVoix }) =>
   send<Voix>(`/voix/${voixId}`, 'PUT', modif)
 export const deleteVoice = (voixId: string) => send<{ supprime: string }>(`/voix/${voixId}`, 'DELETE')
@@ -300,7 +370,7 @@ export async function addVoice(fichier: File, nom: string, sexe: Sexe, age: AgeV
   form.append('nom', nom)
   form.append('sexe', sexe)
   form.append('age', age)
-  const res = await fetch(`${API_URL}/voix`, { method: 'POST', body: form })
+  const res = await fetch(`${API_URL}/voix`, { method: 'POST', body: form, headers: entetes() })
   if (!res.ok) throw new Error((await res.json().catch(() => null))?.detail ?? `Erreur serveur (${res.status})`)
   return res.json()
 }
@@ -313,11 +383,11 @@ export async function regenerateVoices(id: string): Promise<Job> {
 
 // ───────────────────────── Synchronisation labiale (phase 8) ─────────────────────────
 
-export const kaggleUrl = (id: string) => `${API_URL}/jobs/${id}/kaggle`
+export const kaggleUrl = (id: string) => fichier(`/jobs/${id}/kaggle`)
 export async function importLipsync(id: string, video: File): Promise<Job> {
   const form = new FormData()
   form.append('video', video)
-  const res = await fetch(`${API_URL}/jobs/${id}/synchro`, { method: 'POST', body: form })
+  const res = await fetch(`${API_URL}/jobs/${id}/synchro`, { method: 'POST', body: form, headers: entetes() })
   if (!res.ok) throw new Error((await res.json().catch(() => null))?.detail ?? `Erreur serveur (${res.status})`)
   return res.json()
 }

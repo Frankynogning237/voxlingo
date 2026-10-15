@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import hmac
 import json
 import logging
+import uuid
 import platform
 import re
 import shutil
@@ -12,9 +14,9 @@ from functools import lru_cache
 from typing import Literal
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel
 
 import jobs
@@ -39,9 +41,25 @@ logger = logging.getLogger("voxlingo")
 
 app = FastAPI(title="VoxLingo", version="0.1.0")
 
+
+
+@app.middleware("http")
+async def verifier_cle(request: Request, call_next):
+    """Moteur exposé sur Internet : exige la clé d'accès (en-tête, ou paramètre `cle` pour les
+    vidéos, images et téléchargements que le navigateur charge lui-même)."""
+    cle = get_settings().cle_acces
+    if cle and request.method != "OPTIONS":
+        fournie = request.headers.get("x-cle-acces") or request.query_params.get("cle") or ""
+        if not hmac.compare_digest(fournie.encode(), cle.encode()):
+            return JSONResponse({"detail": "Clé d'accès manquante ou incorrecte."}, status_code=401)
+    return await call_next(request)
+
+
+# Ajouté après la vérification de la clé : il l'enveloppe, donc même un refus porte les en-têtes CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=get_settings().cors_origines,
+    allow_origin_regex=get_settings().cors_regex,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -99,9 +117,67 @@ def _espace_libre() -> int:
     return shutil.disk_usage(get_settings().projects_dir).free
 
 
+def _fichier_televersement(televersement_id: str) -> Path:
+    if not televersement_id.isalnum():
+        raise HTTPException(404, "Envoi introuvable.")
+    dossier = get_settings().data_dir / "televersements"
+    dossier.mkdir(parents=True, exist_ok=True)
+    return dossier / f"{televersement_id}.part"
+
+
+@app.post("/televersements", status_code=201)
+def debut_televersement() -> dict:
+    """Commence l'envoi d'une vidéo par morceaux (les tunnels gratuits limitent chaque requête à ~100 Mo)."""
+    televersement_id = uuid.uuid4().hex
+    _fichier_televersement(televersement_id).touch()
+    return {"id": televersement_id}
+
+
+@app.put("/televersements/{televersement_id}")
+async def morceau_televersement(televersement_id: str, request: Request, debut: int = 0) -> dict:
+    """Ajoute un morceau à la fin du fichier ; `debut` (position attendue) rend les nouvelles tentatives sûres."""
+    fichier = _fichier_televersement(televersement_id)
+    if not fichier.is_file():
+        raise HTTPException(404, "Envoi introuvable.")
+    taille = fichier.stat().st_size
+    if debut != taille:
+        if debut + int(request.headers.get("content-length") or 0) == taille:
+            return {"taille": taille}  # morceau déjà reçu : nouvelle tentative après une coupure
+        raise HTTPException(409, f"Morceau inattendu : {taille} octets déjà reçus.")
+    if _espace_libre() < ESPACE_MINIMAL:
+        raise HTTPException(507, "Espace disque insuffisant pour cette vidéo.")
+    with fichier.open("ab") as out:
+        try:
+            async for bloc in request.stream():
+                out.write(bloc)
+        except BaseException:
+            out.truncate(taille)  # morceau coupé en route : on l'efface pour qu'il soit renvoyé en entier
+            raise
+    return {"taille": fichier.stat().st_size}
+
+
+async def _enregistrer_video(video: UploadFile, destination: Path) -> int:
+    """Écrit la vidéo par morceaux pour ne jamais la charger entière en mémoire ; renvoie sa taille."""
+    taille = 0
+    with destination.open("wb") as out:
+        while chunk := await video.read(CHUNK_BYTES):
+            taille += len(chunk)
+            # Vérification régulière (tous les ~256 Mo) de l'espace disque restant
+            if taille % (32 * CHUNK_BYTES) < len(chunk) and _espace_libre() < ESPACE_MINIMAL:
+                raise HTTPException(
+                    507,
+                    "Espace disque insuffisant pour cette vidéo : libérez de la place "
+                    f"(au moins {ESPACE_MINIMAL // 1024**3} Go doivent rester libres).",
+                )
+            out.write(chunk)
+    return taille
+
+
 @app.post("/jobs", status_code=201)
 async def create_job(
-    video: UploadFile = File(...),
+    video: UploadFile | None = File(None),
+    televersement: str | None = Form(None),
+    nom_fichier: str | None = Form(None),
     langue_cible: str = Form(...),
     conserver_fond: bool = Form(True),
     synchro_labiale: bool = Form(False),
@@ -112,7 +188,10 @@ async def create_job(
     voix_bibliotheque: bool = Form(False),
 ) -> dict:
     """Reçoit une vidéo et la langue cible, enregistre le projet et lance le pipeline."""
-    nom = Path(video.filename or "video").name
+    # La vidéo arrive dans la requête (`video`) ou a déjà été envoyée par morceaux (`televersement`)
+    if video is None and not televersement:
+        raise HTTPException(400, "Aucune vidéo reçue.")
+    nom = Path((video.filename if video else nom_fichier) or "video").name
     ext = Path(nom).suffix.lower()
     if ext not in ALLOWED_EXTENSIONS:
         raise HTTPException(
@@ -126,20 +205,15 @@ async def create_job(
     folder.mkdir(parents=True)
     destination = folder / f"input{ext}"
 
-    # Écriture par morceaux pour ne jamais charger la vidéo entière en mémoire
-    taille = 0
     try:
-        with destination.open("wb") as out:
-            while chunk := await video.read(CHUNK_BYTES):
-                taille += len(chunk)
-                # Vérification régulière (tous les ~256 Mo) de l'espace disque restant
-                if taille % (32 * CHUNK_BYTES) < len(chunk) and _espace_libre() < ESPACE_MINIMAL:
-                    raise HTTPException(
-                        507,
-                        "Espace disque insuffisant pour cette vidéo : libérez de la place "
-                        f"(au moins {ESPACE_MINIMAL // 1024**3} Go doivent rester libres).",
-                    )
-                out.write(chunk)
+        if video is not None:
+            taille = await _enregistrer_video(video, destination)
+        else:
+            partiel = _fichier_televersement(televersement or "")
+            if not partiel.is_file():
+                raise HTTPException(404, "Envoi introuvable : renvoyez la vidéo.")
+            taille = partiel.stat().st_size
+            shutil.move(partiel, destination)
     except BaseException:
         shutil.rmtree(folder, ignore_errors=True)
         raise
@@ -599,7 +673,10 @@ def set_parametres(valeurs: ValeursParametres) -> dict:
 def ouvrir_dossier() -> dict:
     """Ouvre le dossier des projets dans l'Explorateur Windows."""
     import os
+    import sys
 
+    if sys.platform != "win32":
+        raise HTTPException(400, "Le dossier des projets ne peut s'ouvrir que sur un moteur installé sur ce PC Windows.")
     os.startfile(get_settings().projects_dir)  # type: ignore[attr-defined]  # Windows uniquement
     return {"ok": True}
 

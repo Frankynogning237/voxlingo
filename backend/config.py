@@ -77,6 +77,13 @@ class Settings(BaseSettings):
     # Jeton Hugging Face (phase 6), uniquement dans .env
     hf_token: str | None = None
 
+    # Accès à distance (moteur sur Kaggle/Colab, interface sur Vercel).
+    # Clé d'accès : si elle est définie, chaque requête doit la fournir.
+    cle_acces: str | None = None
+    # Sites autorisés à appeler le moteur (CORS)
+    cors_origines: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
+    cors_regex: str | None = r"https://[a-z0-9-]+\.vercel\.app"
+
     @property
     def projects_dir(self) -> Path:
         return self.data_dir / "projects"

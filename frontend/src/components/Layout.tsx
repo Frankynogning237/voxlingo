@@ -5,7 +5,8 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from '
 import { createPortal } from 'react-dom'
 
 import { Logo, NeonWaves } from '@/components/Brand'
-import { getHealth } from '@/lib/api'
+import { ConnexionMoteur } from '@/components/ConnexionMoteur'
+import { API_URL, getHealth } from '@/lib/api'
 import { href, type Route } from '@/lib/router'
 import { cn } from '@/lib/utils'
 import { pageVariants, voxTransition } from '@/motion/variants'
@@ -73,7 +74,7 @@ function NavLink({ item, active }: { item: NavItem; active: boolean }) {
 }
 
 export function UserFooter({ bordered = true }: { bordered?: boolean }) {
-  const { data } = useHealth()
+  const { data, isError } = useHealth()
   const nom = data?.nom_utilisateur?.trim()
   return (
     <div className={cn('relative px-2', bordered && 'mt-auto border-t border-white/10 pt-6')}>
@@ -83,8 +84,9 @@ export function UserFooter({ bordered = true }: { bordered?: boolean }) {
         </span>
         <div className="flex-1">
           <p className="text-[15px] text-white">Mon espace</p>
-          <p className="flex items-center gap-1.5 text-sm text-success">
-            <span className="size-2 rounded-full bg-success" /> En ligne
+          <p className={cn('flex items-center gap-1.5 text-sm', isError ? 'text-destructive' : 'text-success')}>
+            <span className={cn('size-2 rounded-full', isError ? 'bg-destructive' : 'bg-success')} />
+            {isError ? 'Hors ligne' : 'En ligne'}
           </p>
         </div>
         <ChevronDown className="size-5 text-muted-foreground" />
@@ -115,25 +117,41 @@ function Sidebar({ current, footer }: { current: Route; footer: boolean }) {
   )
 }
 
+/** Moteur sur un autre ordinateur (Kaggle, Colab…) plutôt que sur ce PC */
+const moteurDistant = !/^https?:\/\/(localhost|127\.0\.0\.1)(:|\/|$)/.test(API_URL)
+/** Interface publiée (Vercel) : sans moteur joignable, on propose tout de suite la connexion */
+const interfacePubliee = !['localhost', '127.0.0.1'].includes(window.location.hostname)
+let connexionProposee = false
+
 export function SystemStatus() {
-  const { data, isError } = useHealth()
+  const { data, isError, error } = useHealth()
+  const [ouvert, setOuvert] = useState(false)
+  useEffect(() => {
+    if (isError && interfacePubliee && !connexionProposee) {
+      connexionProposee = true
+      setOuvert(true)
+    }
+  }, [isError])
   const etat = isError ? 'erreur' : !data ? 'attente' : data.device === 'cuda' ? 'gpu' : 'cpu'
   const libelle = {
-    erreur: 'Serveur local injoignable',
+    erreur: moteurDistant ? 'Moteur distant injoignable' : 'Serveur local injoignable',
     attente: 'Vérification…',
-    gpu: 'GPU NVIDIA prêt',
-    cpu: 'Mode CPU',
+    gpu: moteurDistant ? 'Moteur distant · GPU' : 'GPU NVIDIA prêt',
+    cpu: moteurDistant ? 'Moteur distant · CPU' : 'Mode CPU',
   }[etat]
   const couleur = { erreur: 'bg-destructive', attente: 'bg-muted-foreground', gpu: 'bg-success', cpu: 'bg-warning' }[etat]
   return (
     <div className="flex items-center gap-4">
-      <span
-        title={data?.device === 'cuda' ? `${data.vram_totale_go} Go de VRAM` : 'Aucune carte NVIDIA : traitement sur le processeur'}
-        className="flex h-10 items-center gap-2.5 rounded-full border border-white/12 bg-[#0d1017] px-4 text-[15px] text-white"
+      <button
+        type="button"
+        onClick={() => setOuvert(true)}
+        title={`${data?.device === 'cuda' ? `${data.vram_totale_go} Go de VRAM` : 'Aucune carte NVIDIA : traitement sur le processeur'} · cliquer pour changer de moteur`}
+        className="flex h-10 items-center gap-2.5 rounded-full border border-white/12 bg-[#0d1017] px-4 text-[15px] text-white transition-colors hover:border-white/30"
       >
         <span className={cn('size-2.5 rounded-full', couleur, etat === 'gpu' && 'shadow-[0_0_8px_#22c55e]')} />
         {libelle}
-      </span>
+      </button>
+      <ConnexionMoteur ouvert={ouvert} onFermer={() => setOuvert(false)} erreur={isError ? (error as Error).message : undefined} />
       <Info className="size-7 text-white/80" strokeWidth={1.5} aria-label="Informations" />
     </div>
   )

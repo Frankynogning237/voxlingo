@@ -121,6 +121,31 @@ Sans carte NVIDIA, la synchronisation des lèvres (LatentSync 1.5) se fait sur l
 2. sur kaggle.com : importer le carnet et le paquet, choisir un GPU, *Run All* ;
 3. écran Résultat → *Importer la vidéo synchronisée* : elle devient la vidéo téléchargée.
 
+## En ligne, gratuitement (Vercel + Kaggle/Colab)
+
+Pour un PC peu puissant : l'**interface** est publiée sur Vercel (gratuit), le **moteur** tourne sur le GPU
+gratuit de Kaggle (≈ 30 h/semaine) ou de Colab, joignable grâce à un tunnel Cloudflare gratuit. Coût : 0 F.
+
+**Interface sur Vercel (une seule fois)**
+1. vercel.com → *Sign up with GitHub* (offre Hobby) → *Add New… → Project* → importer le dépôt `voxlingo` ;
+2. *Root Directory* : `frontend` (Vite est détecté, `frontend/vercel.json` fait le reste) → *Deploy* ;
+3. noter l'adresse obtenue (par exemple `https://voxlingo.vercel.app`). Chaque `git push` republie l'interface.
+
+**Moteur sur Kaggle (à chaque séance)**
+1. kaggle.com → *Create → New Notebook → File → Import Notebook* → `kaggle/moteur_voxlingo.ipynb` ;
+2. une seule fois : vérifier son téléphone (*Settings* du compte), puis dans le carnet *GPU T4 x2*, *Internet On*,
+   et le secret `GITHUB_TOKEN` (jeton GitHub *fine-grained*, lecture seule du contenu de `voxlingo`) ;
+3. renseigner `ADRESSE_VERCEL` dans la première cellule → *Run All* (≈ 10 min) ;
+4. ouvrir le lien affiché : l'interface Vercel se connecte toute seule au moteur (adresse et clé mémorisées).
+
+Le même carnet fonctionne sur Colab (*Fichier → Importer*, secret dans l'icône 🔑). Le moteur exige une **clé
+d'accès** (`CLE_ACCES`) et n'accepte que les sites `localhost` et `*.vercel.app` (`CORS_ORIGINES`, `CORS_REGEX`).
+Les vidéos partent en morceaux de 50 Mo (le tunnel refuse les envois de plus de 100 Mo), donc sans limite de taille.
+Le voyant d'état en haut à droite ouvre la fenêtre **Connexion au moteur** (bouton *Moteur de ce PC* pour revenir).
+
+À savoir : l'adresse du moteur change à chaque séance, et les fichiers de Kaggle/Colab sont effacés à la fin
+(12 h max) — téléchargez vos vidéos doublées avant. XTTS v2 (CPML) et NLLB : usage personnel non commercial.
+
 ## Tests
 
 ```powershell
