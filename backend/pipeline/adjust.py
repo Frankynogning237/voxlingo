@@ -18,7 +18,7 @@ import httpx
 
 from config import get_runtime, get_settings
 from pipeline.segments import (
-    ACCELERATION_MAX,
+    capacite,
     decouper,
     est_trop_long,
     marquer_fin_max,
@@ -35,22 +35,22 @@ from pipeline.translate import (
 
 logger = logging.getLogger("voxlingo.adjust")
 
-ESSAIS_RACCOURCIR = 2
+ESSAIS_REFORMULER = 3  # « reformuler » : la voix naturelle demande des phrases plus courtes
 
 
-def _syllabes_max(seg: dict[str, Any], traduction: str, source: str, cible: str) -> int:
+def _syllabes_max(seg: dict[str, Any], traduction: str, source: str, cible: str, strategie: str) -> int:
     """Syllabes maximales pour tenir dans le temps disponible, avec une petite marge."""
     ratio = ratio_requis(seg, traduction, source, cible)
-    return max(1, int(compter_syllabes(traduction) * ACCELERATION_MAX / ratio * 0.95))
+    return max(1, int(compter_syllabes(traduction) * capacite(strategie) / ratio * 0.95))
 
 
 def _raccourcir(client: httpx.Client, modele: str, seg: dict[str, Any], traduction: str,
-                source: str, cible: str) -> str | None:
-    """Essaie de raccourcir la traduction ; renvoie la version qui tient, ou None."""
-    for _ in range(ESSAIS_RACCOURCIR):
+                source: str, cible: str, strategie: str) -> str | None:
+    """Fait reformuler la traduction plus brièvement, dans le même sens ; renvoie la version qui tient, ou None."""
+    for _ in range(ESSAIS_REFORMULER):
         courte = raccourcir(client, modele, seg["texte"], traduction, source, cible,
-                            _syllabes_max(seg, traduction, source, cible))
-        if not est_trop_long(seg, courte, source, cible):
+                            _syllabes_max(seg, traduction, source, cible, strategie))
+        if not est_trop_long(seg, courte, source, cible, strategie):
             return courte
         if compter_syllabes(courte) < compter_syllabes(traduction):
             traduction = courte  # on repart de la version la plus courte obtenue
@@ -63,8 +63,12 @@ def ajuster_segments(
     cible: str,
     ids: set[int] | None = None,
     on_progress: Callable[[float], None] | None = None,
+    strategie: str | None = None,
 ) -> dict[str, int]:
     """Ajuste les phrases trop longues de `data["segments"]` (toutes, ou seulement `ids`).
+
+    `strategie` (« reformuler » ou « accelerer ») fixe à partir de quand une phrase est trop
+    longue : dès qu'il faudrait accélérer la voix, ou seulement au-delà de l'accélération maximale.
 
     Modifie `data` sur place et renvoie le bilan : {silence, raccourcies, decoupees, a_revoir}.
     """
@@ -76,14 +80,14 @@ def ajuster_segments(
     for seg in segments:
         if (ids is None or seg["id"] in ids) and seg.get("traduction"):
             hors_silence = ratio_requis(seg, seg["traduction"], source, cible, avec_silence=False)
-            if hors_silence > ACCELERATION_MAX and not est_trop_long(seg, seg["traduction"], source, cible):
+            if hors_silence > capacite(strategie) and not est_trop_long(seg, seg["traduction"], source, cible, strategie):
                 bilan["silence"] += 1
 
     a_traiter = [
         i for i, seg in enumerate(segments)
         if (ids is None or seg["id"] in ids)
         and seg.get("traduction")
-        and est_trop_long(seg, seg["traduction"], source, cible)
+        and est_trop_long(seg, seg["traduction"], source, cible, strategie)
     ]
     if not a_traiter:
         return bilan
@@ -104,7 +108,7 @@ def ajuster_segments(
                     continue
 
                 # 2. Raccourcir la traduction
-                courte = _raccourcir(client, modele, seg, seg["traduction"], source, cible)
+                courte = _raccourcir(client, modele, seg, seg["traduction"], source, cible, strategie)
                 if courte is not None:
                     seg["traduction"] = courte
                     seg["ajustement"] = "raccourcie"
@@ -119,8 +123,8 @@ def ajuster_segments(
                         traduits: list[str] = []
                         for k, morceau in enumerate(morceaux):
                             texte = _traduire_segment(client, modele, morceaux, k, source, cible, traduits)
-                            if est_trop_long(morceau, texte, source, cible):
-                                texte = _raccourcir(client, modele, morceau, texte, source, cible) or texte
+                            if est_trop_long(morceau, texte, source, cible, strategie):
+                                texte = _raccourcir(client, modele, morceau, texte, source, cible, strategie) or texte
                             traduits.append(texte)
                             morceau["traduction"] = texte
                             morceau["traduction_ia"] = texte
@@ -142,7 +146,7 @@ def ajuster_segments(
         seg["id"] = n
     marquer_fin_max(resultat, data.get("duree_s"))
     for seg in resultat:
-        seg["trop_long"] = est_trop_long(seg, seg["traduction"], source, cible)
+        seg["trop_long"] = est_trop_long(seg, seg["traduction"], source, cible, strategie)
     bilan["a_revoir"] = sum(1 for seg in resultat if seg["trop_long"])
     data["segments"] = resultat
     logger.info("Ajustement : %s", bilan)

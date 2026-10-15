@@ -9,6 +9,7 @@ import {
   EllipsisVertical,
   Pause,
   Play,
+  PenLine,
   RotateCcw,
   Save,
   Scissors,
@@ -18,7 +19,7 @@ import {
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 
-import { Panel } from '@/components/Controls'
+import { Panel, Switch } from '@/components/Controls'
 import { EditorTimeline } from '@/components/EditorTimeline'
 import { BottomPanel, SystemStatus, UserFooter } from '@/components/Layout'
 import { PrimaryButton } from '@/components/PrimaryButton'
@@ -32,6 +33,8 @@ import {
   validateTranslations,
   adjustTranslations,
   type BilanAjustement,
+  type StrategieDuree,
+  setStrategy,
   videoUrl,
   type Job,
   type Segment,
@@ -119,20 +122,25 @@ const DEBIT: Record<string, number> = {
 }
 const debit = (langue?: string | null) => (langue && DEBIT[langue]) || 6.5
 
-const ACCELERATION_MAX = 1.25 // atempo maximal de la voix doublée (même valeur que le serveur)
+// Mêmes valeurs que backend/pipeline/segments.py
+const FACTEUR_DEBIT_XTTS = 0.77 // XTTS parle ~23 % plus lentement que le débit moyen de la langue
+const CAPACITE: Record<StrategieDuree, number> = {
+  reformuler: 1.08, // voix au débit naturel, accélération imperceptible tolérée
+  accelerer: 1.35 * 1.25, // XTTS ×1,35 puis calage atempo ×1,25
+}
 
 /**
- * Vrai si, même accélérée au maximum, la voix doublée ne tient pas dans le temps
- * disponible : durée de la phrase + silence avant la suivante (fin_max).
+ * Vrai si la voix doublée ne tient pas dans le temps disponible (durée de la phrase + silence
+ * avant la suivante) sans dépasser l'accélération permise par la stratégie choisie.
  */
-function tropLong(seg: Segment, traduction: string, source?: string | null, cible?: string | null) {
-  const rapport = syllabes(traduction) / debit(cible) / (syllabes(seg.texte) / debit(source))
+function tropLong(seg: Segment, traduction: string, strategie: StrategieDuree, cible?: string | null) {
+  const dureeVoix = syllabes(traduction) / (debit(cible) * FACTEUR_DEBIT_XTTS)
   const disponible = Math.max((seg.fin_max ?? seg.fin) - seg.debut, 0.1)
-  return (Math.max(seg.fin - seg.debut, 0.1) * rapport) / disponible > ACCELERATION_MAX
+  return dureeVoix / disponible > CAPACITE[strategie]
 }
 
 const LIBELLES_AJUSTEMENT = {
-  raccourcie: { texte: 'Raccourcie', aide: "Traduction raccourcie automatiquement par l'IA pour tenir dans le temps." },
+  raccourcie: { texte: 'Reformulée', aide: "Traduction reformulée plus brièvement par l'IA, dans le même sens, pour tenir dans le temps." },
   decoupee: { texte: 'Découpée', aide: 'Phrase redécoupée aux pauses naturelles, chaque morceau calé sur son moment.' },
   a_revoir: { texte: 'À revoir', aide: 'Aucun ajustement automatique ne suffit : raccourcissez cette traduction à la main.' },
 } as const
@@ -141,7 +149,7 @@ const LIBELLES_AJUSTEMENT = {
 function BilanBandeau({ bilan, onClose }: { bilan: BilanAjustement; onClose: () => void }) {
   const parties = [
     bilan.silence > 0 && `${bilan.silence} tiennent grâce au silence suivant`,
-    bilan.raccourcies > 0 && `${bilan.raccourcies} raccourcie${bilan.raccourcies > 1 ? 's' : ''} par l'IA`,
+    bilan.raccourcies > 0 && `${bilan.raccourcies} reformulée${bilan.raccourcies > 1 ? 's' : ''} par l'IA`,
     bilan.decoupees > 0 && `${bilan.decoupees} découpée${bilan.decoupees > 1 ? 's' : ''} en morceaux`,
   ].filter(Boolean)
   return (
@@ -184,7 +192,7 @@ function SegmentRow({
   onAdjust,
 }: {
   seg: Segment
-  langues: { source?: string | null; cible?: string | null }
+  langues: { source?: string | null; cible?: string | null; strategie: StrategieDuree }
   traduction: string
   selectionne: boolean
   enLecture: boolean
@@ -196,7 +204,7 @@ function SegmentRow({
   onAdjust: () => void
 }) {
   const [menu, setMenu] = useState(false)
-  const alerte = tropLong(seg, traduction, langues.source, langues.cible)
+  const alerte = tropLong(seg, traduction, langues.strategie, langues.cible)
   const ajustement = seg.ajustement && seg.ajustement !== 'a_revoir' && !modifie ? LIBELLES_AJUSTEMENT[seg.ajustement] : null
   return (
     <motion.div
@@ -220,7 +228,11 @@ function SegmentRow({
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0 }}
               transition={voxTransition(0.25)}
-              title="Même accélérée, la voix doublée ne tiendrait pas dans le temps disponible. Utilisez « Ajuster » ou raccourcissez le texte."
+              title={
+                langues.strategie === 'reformuler'
+                  ? "Lue à un débit naturel, la voix ne tiendrait pas dans son temps : « Ajuster » la fera reformuler plus brièvement. À défaut, elle sera accélérée en dernier recours."
+                  : 'Même accélérée au maximum, la voix ne tiendrait pas dans son temps : utilisez « Ajuster » ou raccourcissez le texte.'
+              }
               className="flex items-center gap-1.5 rounded-full border border-warning/70 bg-warning/10 px-3 py-1 text-[13px] whitespace-nowrap text-warning"
             >
               <TriangleAlert className="size-3.5" /> Trop long
@@ -330,8 +342,9 @@ export function TranslationEditor({ job }: { job: Job }) {
   const modifications = segments
     .filter((s) => brouillon[s.id] !== undefined && brouillon[s.id] !== s.traduction)
     .map((s) => ({ id: s.id, traduction: brouillon[s.id] }))
-  const langues = { source: data?.langue ?? job.langue_source, cible: job.langue_cible }
-  const nbTropLongs = segments.filter((s) => tropLong(s, traductions[s.id], langues.source, langues.cible)).length
+  const strategie: StrategieDuree = job.options?.strategie_duree ?? 'reformuler'
+  const langues = { source: data?.langue ?? job.langue_source, cible: job.langue_cible, strategie }
+  const nbTropLongs = segments.filter((s) => tropLong(s, traductions[s.id], strategie, langues.cible)).length
   const vide = segments.some((s) => !traductions[s.id]?.trim())
 
   const appliquer = (nouvelles: Transcription) => {
@@ -357,7 +370,7 @@ export function TranslationEditor({ job }: { job: Job }) {
       queryClient.setQueryData(['job', job.id], j)
       await queryClient.invalidateQueries({ queryKey: ['segments', job.id] })
       setBrouillon({})
-      notifier('succes', "Traduction validée. La voix traduite sera générée à l'étape suivante (phase 4, en cours de développement).")
+      notifier('succes', 'Traduction validée : génération des voix lancée.')
     },
     onError: (e) => notifier('erreur', (e as Error).message),
   })
@@ -391,7 +404,15 @@ export function TranslationEditor({ job }: { job: Job }) {
     },
     onError: (e) => notifier('erreur', (e as Error).message),
   })
-  const occupe = ajuster.isPending || enregistrer.isPending || valider.isPending || reinitialiser.isPending || retraduire.isPending
+  const changerStrategie = useMutation({
+    mutationFn: (s: StrategieDuree) => setStrategy(job.id, s),
+    onSuccess: (j) => {
+      queryClient.setQueryData(['job', job.id], j)
+      void queryClient.invalidateQueries({ queryKey: ['segments', job.id] })
+    },
+    onError: (e) => notifier('erreur', (e as Error).message),
+  })
+  const occupe = changerStrategie.isPending || ajuster.isPending || enregistrer.isPending || valider.isPending || reinitialiser.isPending || retraduire.isPending
 
   // Le segment sous le curseur de lecture est mis en évidence dans le tableau
   const segmentLu = segments.find((s) => clock.temps >= s.debut && clock.temps < s.fin)
@@ -454,6 +475,17 @@ export function TranslationEditor({ job }: { job: Job }) {
             <Sparkles className="size-5 text-violet-300" /> Traduction assistée par IA
           </button>
         )}
+        <label
+          className="flex h-11 items-center gap-3 rounded-xl border border-white/12 px-4 text-[14px] text-white"
+          title="Activé : une phrase trop longue est reformulée plus brièvement, dans le même sens, pour garder une voix naturelle. Désactivé : la voix est d'abord accélérée."
+        >
+          <PenLine className="size-4 text-violet-300" /> Reformuler plutôt qu'accélérer
+          <Switch
+            checked={strategie === 'reformuler'}
+            onChange={(v) => changerStrategie.mutate(v ? 'reformuler' : 'accelerer')}
+            label="Reformuler plutôt qu'accélérer"
+          />
+        </label>
         <button
           type="button"
           disabled={occupe || nbTropLongs === 0}
@@ -461,7 +493,9 @@ export function TranslationEditor({ job }: { job: Job }) {
           title={
             nbTropLongs === 0
               ? 'Aucune phrase trop longue'
-              : "Silence suivant, version plus courte proposée par l'IA, ou découpage aux pauses naturelles"
+              : strategie === 'reformuler'
+                ? "L'IA reformule plus brièvement, dans le même sens, les phrases qui ne tiennent pas au débit naturel"
+                : "Silence suivant, version plus courte proposée par l'IA, ou découpage aux pauses naturelles"
           }
           className="flex h-11 items-center gap-2.5 rounded-xl border border-cyan-400/40 px-5 text-[15px] text-white transition-colors duration-200 hover:border-cyan-300/80 disabled:opacity-45"
         >

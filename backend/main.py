@@ -5,14 +5,16 @@ from __future__ import annotations
 import json
 import logging
 import platform
+import re
 import shutil
 import subprocess
 from functools import lru_cache
+from typing import Literal
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
 import jobs
@@ -106,6 +108,7 @@ async def create_job(
     sous_titres: bool = Form(True),
     volume_fond: int = Form(100, ge=0, le=100),
     ajuster_trop_longs: bool = Form(True),
+    strategie_duree: Literal["reformuler", "accelerer"] = Form("reformuler"),
 ) -> dict:
     """Reçoit une vidéo et la langue cible, enregistre le projet et lance le pipeline."""
     nom = Path(video.filename or "video").name
@@ -147,6 +150,7 @@ async def create_job(
         "sous_titres": sous_titres,
         "volume_fond": volume_fond,
         "ajuster_trop_longs": ajuster_trop_longs,
+        "strategie_duree": strategie_duree,
     }
     status = jobs.create_job(job_id, nom, destination.name, langue_cible, options)
     jobs.start_job(job_id)
@@ -215,7 +219,8 @@ def save_translations(job_id: str, edition: EditionTraductions) -> dict:
             if not par_id[seg["id"]]:
                 raise HTTPException(400, f"La traduction du segment {seg['id'] + 1} est vide.")
             seg["traduction"] = par_id[seg["id"]]
-            seg["trop_long"] = est_trop_long(seg, seg["traduction"], status["langue_source"], status["langue_cible"])
+            seg["trop_long"] = est_trop_long(seg, seg["traduction"], status["langue_source"], status["langue_cible"],
+                                             jobs.strategie(status))
     jobs.write_segments(job_id, data)
     jobs.update_status(job_id, traduction_validee=False, brouillon_le=jobs._now())
     return data
@@ -229,10 +234,33 @@ def reset_translations(job_id: str) -> dict:
     marquer_fin_max(data["segments"], status.get("duree_s"))
     for seg in data["segments"]:
         seg["traduction"] = seg["traduction_ia"]
-        seg["trop_long"] = est_trop_long(seg, seg["traduction"], status["langue_source"], status["langue_cible"])
+        seg["trop_long"] = est_trop_long(seg, seg["traduction"], status["langue_source"], status["langue_cible"],
+                                         jobs.strategie(status))
     jobs.write_segments(job_id, data)
     jobs.update_status(job_id, traduction_validee=False)
     return data
+
+
+class ChoixStrategie(BaseModel):
+    strategie_duree: Literal["reformuler", "accelerer"]
+
+
+@app.put("/jobs/{job_id}/options")
+def set_strategy(job_id: str, choix: ChoixStrategie) -> dict:
+    """Change la stratégie face aux phrases trop longues et recalcule les alertes."""
+    status = _get_status_or_404(job_id)
+    if status["etat"] in ("en_attente", "en_cours"):
+        raise HTTPException(409, "Un traitement est en cours : attendez sa fin pour changer cette option.")
+    options = {**(status.get("options") or {}), "strategie_duree": choix.strategie_duree}
+    status = jobs.update_status(job_id, options=options)
+    if (jobs.project_dir(job_id) / "segments.json").is_file() and status.get("moteur_traduction"):
+        data = jobs.read_segments(job_id)
+        marquer_fin_max(data["segments"], status.get("duree_s"))
+        for seg in data["segments"]:
+            seg["trop_long"] = est_trop_long(seg, seg["traduction"], status["langue_source"], status["langue_cible"],
+                                             choix.strategie_duree)
+        jobs.write_segments(job_id, data)
+    return status
 
 
 @app.post("/jobs/{job_id}/traduire")
@@ -259,9 +287,73 @@ def adjust_translations(job_id: str, demande: DemandeAjustement) -> dict:
 
 @app.post("/jobs/{job_id}/valider")
 def validate_translations(job_id: str, edition: EditionTraductions) -> dict:
-    """Enregistre puis valide les traductions : la génération des voix pourra démarrer (phase 4)."""
+    """Enregistre et valide les traductions, puis lance la génération des voix et l'export.
+
+    Sert aussi après une correction : seules les phrases dont le texte a changé sont
+    régénérées (cache des voix), puis la vidéo est réassemblée.
+    """
     save_translations(job_id, edition)
-    return jobs.update_status(job_id, traduction_validee=True, etat="termine", valide_le=jobs._now())
+    status = jobs.update_status(job_id, traduction_validee=True, etat="en_attente", valide_le=jobs._now())
+    jobs.start_voices(job_id)
+    return status
+
+
+def _fichier_projet(job_id: str, nom: str, message: str) -> Path:
+    path = jobs.project_dir(job_id) / nom
+    if not path.is_file():
+        raise HTTPException(404, message)
+    return path
+
+
+def _nom_telechargement(status: dict, extension: str) -> str:
+    return f"{Path(status['nom_fichier']).stem}_{status['langue_cible']}.{extension}"
+
+
+@app.get("/jobs/{job_id}/download")
+def download_video(job_id: str) -> FileResponse:
+    """Vidéo doublée (MP4)."""
+    status = _get_status_or_404(job_id)
+    path = _fichier_projet(job_id, "doublage.mp4", "La vidéo doublée n'est pas encore prête.")
+    return FileResponse(path, media_type="video/mp4", filename=_nom_telechargement(status, "mp4"))
+
+
+@app.get("/jobs/{job_id}/dubbed")
+def stream_dubbed(job_id: str) -> FileResponse:
+    """Vidéo doublée pour la lecture dans l'interface (sans forcer le téléchargement)."""
+    _get_status_or_404(job_id)
+    return FileResponse(_fichier_projet(job_id, "doublage.mp4", "La vidéo doublée n'est pas encore prête."),
+                        media_type="video/mp4")
+
+
+@app.get("/jobs/{job_id}/subtitles")
+def download_subtitles(job_id: str) -> FileResponse:
+    """Sous-titres dans la langue cible (SRT)."""
+    status = _get_status_or_404(job_id)
+    path = _fichier_projet(job_id, "sous-titres.srt", "Les sous-titres n'ont pas été générés pour ce projet.")
+    return FileResponse(path, media_type="application/x-subrip", filename=_nom_telechargement(status, "srt"))
+
+
+@app.get("/jobs/{job_id}/subtitles.vtt")
+def subtitles_vtt(job_id: str) -> Response:
+    """Sous-titres au format WebVTT, pour l'affichage dans le lecteur de l'interface."""
+    _get_status_or_404(job_id)
+    srt = _fichier_projet(job_id, "sous-titres.srt", "Les sous-titres n'ont pas été générés pour ce projet.")
+    # SRT : 00:00:01,500 ; WebVTT : 00:00:01.500
+    corps = re.sub(r"(\d{2}:\d{2}:\d{2}),(\d{3})", r"\1.\2", srt.read_text(encoding="utf-8"))
+    return Response("WEBVTT\n\n" + corps, media_type="text/vtt; charset=utf-8")
+
+
+@app.get("/jobs/{job_id}/audio")
+def download_audio(job_id: str) -> FileResponse:
+    """Piste doublée seule (MP3), créée à la demande."""
+    from pipeline.assemble import exporter_mp3
+
+    status = _get_status_or_404(job_id)
+    piste = _fichier_projet(job_id, "doublage.wav", "La piste doublée n'est pas encore prête.")
+    mp3 = jobs.project_dir(job_id) / "doublage.mp3"
+    if not mp3.is_file() or mp3.stat().st_mtime < piste.stat().st_mtime:
+        exporter_mp3(piste, mp3)
+    return FileResponse(mp3, media_type="audio/mpeg", filename=_nom_telechargement(status, "mp3"))
 
 
 @app.get("/jobs/{job_id}/video")
@@ -312,6 +404,120 @@ def cancel_job(job_id: str) -> dict:
     if status["etat"] not in ("en_attente", "en_cours"):
         raise HTTPException(409, "Ce traitement n'est pas en cours.")
     return jobs.request_cancel(job_id)
+
+
+@app.delete("/jobs/{job_id}")
+def delete_job(job_id: str) -> dict:
+    """Supprime définitivement un projet et ses fichiers."""
+    status = _get_status_or_404(job_id)
+    if status["etat"] in ("en_attente", "en_cours"):
+        raise HTTPException(409, "Annulez le traitement en cours avant de supprimer ce projet.")
+    jobs.delete_job(job_id)
+    return {"supprime": job_id}
+
+
+@app.post("/jobs/{job_id}/dupliquer", status_code=201)
+def duplicate_job(job_id: str) -> dict:
+    """Nouveau projet avec la même vidéo et les mêmes réglages (le traitement démarre aussitôt)."""
+    _get_status_or_404(job_id)
+    return jobs.duplicate_job(job_id)
+
+
+CHOIX_TRANSCRIPTION = [
+    {"valeur": "auto", "libelle": "Automatique"},
+    {"valeur": "small", "libelle": "Whisper Small (rapide)"},
+    {"valeur": "medium", "libelle": "Whisper Medium"},
+    {"valeur": "large-v3-turbo", "libelle": "Whisper Large V3 Turbo"},
+]
+CHOIX_TRADUCTION = [
+    {"valeur": "auto", "libelle": "Automatique"},
+    {"valeur": "qwen2.5:3b", "libelle": "Qwen 2.5 3B (rapide)"},
+    {"valeur": "qwen2.5:7b", "libelle": "Qwen 2.5 7B (meilleure qualité)"},
+    {"valeur": "nllb", "libelle": "NLLB-200 (sans Ollama)"},
+]
+
+
+class ValeursParametres(BaseModel):
+    force_device: Literal["auto", "cpu", "cuda"]
+    whisper_model: str
+    ollama_model: str
+    strategie_duree: Literal["reformuler", "accelerer"]
+    sous_titres: bool
+    conserver_fond: bool
+    volume_fond: int
+
+
+def _taille_dossier(dossier: Path) -> int:
+    return sum(f.stat().st_size for f in dossier.rglob("*") if f.is_file()) if dossier.is_dir() else 0
+
+
+def _etat_parametres() -> dict:
+    import psutil
+
+    from config import PARAMETRES_DEFAUT, lire_parametres
+
+    runtime = get_runtime()
+    settings = get_settings()
+    memoire = psutil.virtual_memory()
+    gpu, vram_utilisee = None, 0.0
+    if runtime.device == "cuda":
+        import torch
+
+        gpu = torch.cuda.get_device_name(0)
+        libre, total = torch.cuda.mem_get_info()
+        vram_utilisee = round((total - libre) / 1024**3, 1)
+    disque = shutil.disk_usage(settings.projects_dir)
+    return {
+        "valeurs": lire_parametres(),
+        "defauts": PARAMETRES_DEFAUT,
+        "choix": {"transcription": CHOIX_TRANSCRIPTION, "traduction": CHOIX_TRADUCTION},
+        "materiel": {
+            "device": runtime.device,
+            "gpu": gpu,
+            "processeur": platform.processor() or platform.machine(),
+            "vram_totale_go": runtime.vram_go,
+            "vram_utilisee_go": vram_utilisee,
+            "ram_totale_go": round(memoire.total / 1024**3, 1),
+            "ram_utilisee_go": round((memoire.total - memoire.available) / 1024**3, 1),
+            "ram_libre_go": round(memoire.available / 1024**3, 1),
+        },
+        "stockage": {
+            "dossier": str(settings.projects_dir),
+            "projets_octets": _taille_dossier(settings.projects_dir),
+            "modeles_octets": _taille_dossier(settings.models_dir),
+            "disque_total_octets": disque.total,
+            "disque_libre_octets": disque.free,
+        },
+    }
+
+
+@app.get("/parametres")
+def get_parametres() -> dict:
+    """Réglages, matériel détecté et espace de stockage, pour la page Paramètres."""
+    return _etat_parametres()
+
+
+@app.put("/parametres")
+def set_parametres(valeurs: ValeursParametres) -> dict:
+    """Enregistre les réglages (data/parametres.json) ; ils s'appliquent aux prochains traitements."""
+    from config import ecrire_parametres
+
+    if valeurs.whisper_model not in {c["valeur"] for c in CHOIX_TRANSCRIPTION}:
+        raise HTTPException(400, "Modèle de transcription inconnu.")
+    if valeurs.ollama_model not in {c["valeur"] for c in CHOIX_TRADUCTION}:
+        raise HTTPException(400, "Modèle de traduction inconnu.")
+    ecrire_parametres({**valeurs.model_dump(), "volume_fond": max(0, min(100, valeurs.volume_fond))})
+    tool_versions.cache_clear()
+    return _etat_parametres()
+
+
+@app.post("/parametres/ouvrir-dossier")
+def ouvrir_dossier() -> dict:
+    """Ouvre le dossier des projets dans l'Explorateur Windows."""
+    import os
+
+    os.startfile(get_settings().projects_dir)  # type: ignore[attr-defined]  # Windows uniquement
+    return {"ok": True}
 
 
 @app.get("/health")

@@ -37,12 +37,17 @@ pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
 # ...ou version CUDA (avec carte NVIDIA)
 # pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu128
 
-# 3. Frontend
+# 3. Voix clonée (XTTS v2) : PyTorch ≥ 2.9 lit l'audio avec torchcodec, qui a besoin
+#    des bibliothèques FFmpeg partagées dans l'environnement conda
+pip install "coqui-tts[codec]"
+conda install -n dubbing --override-channels -c conda-forge "ffmpeg>=6,<8" -y
+
+# 4. Frontend
 cd frontend
 npm install
 cd ..
 
-# 4. Configuration (facultatif)
+# 5. Configuration (facultatif)
 Copy-Item .env.example .env
 ```
 
@@ -71,6 +76,19 @@ La traduction se fait phrase par phrase avec Ollama (`qwen2.5:3b` en mode CPU, `
 
 Le traitement s'arrête ensuite sur l'écran **Édition de la traduction** : chaque traduction est modifiable, l'alerte « Trop long » signale les phrases que la voix ne pourra pas prononcer dans le temps d'origine (plus de 25 % de syllabes en plus), et « Valider et générer les voix » lance la suite.
 
+## Voix doublée
+
+Après « Valider et générer les voix », VoxLingo :
+
+1. extrait 6 à 15 s de la voix d'origine et la clone avec **XTTS v2** (modèle de 1,8 Go téléchargé une fois dans `models/tts`) ;
+2. fait lire chaque phrase traduite par cette voix (les voix générées sont gardées en cache : après une correction, seules les phrases modifiées sont refaites) ;
+3. cale chaque voix sur son temps (accélération jusqu'à ×1,25, ralentissement jusqu'à ×0,85) et signale les phrases qui ne tiennent toujours pas ;
+4. assemble la piste, remplace l'audio de la vidéo **sans réencoder l'image**, et produit les sous-titres `.srt`.
+
+L'écran **Résultat** propose le comparateur avant/après, le téléchargement de la vidéo (MP4), des sous-titres (SRT) et de l'audio seul (MP3), et un retour à l'éditeur pour corriger puis régénérer.
+
+> Jusqu'à la phase 5, la vidéo doublée ne contient que la voix traduite (sans la musique ni l'ambiance d'origine).
+
 ## Modes de fonctionnement
 
 Le backend détecte le matériel au démarrage (`backend/config.py`) :
@@ -98,7 +116,7 @@ models/    Modèles téléchargés (ignoré par Git)
 - [x] Phase 1 — Squelette du projet et environnement
 - [x] Phase 2 — Téléversement, tâches et transcription
 - [x] Phase 3 — Traduction contextuelle locale
-- [ ] Phase 4 — Voix clonée et assemblage
+- [x] Phase 4 — Voix clonée et assemblage
 - [ ] Phase 5 — Conservation du fond sonore
 - [ ] Phase 6 — Plusieurs locuteurs
 - [ ] Phase 7 — Émotion et intonation

@@ -15,13 +15,13 @@ type NavItem = { label: string; icon: LucideIcon; route: Route; disponible: bool
 const NAV: NavItem[] = [
   { label: 'Accueil', icon: House, route: { page: 'accueil' }, disponible: true },
   { label: 'Nouveau doublage', icon: CirclePlus, route: { page: 'nouveau' }, disponible: true },
-  { label: 'Mes projets', icon: FolderClosed, route: { page: 'projets' }, disponible: false },
-  { label: 'Paramètres', icon: Settings, route: { page: 'parametres' }, disponible: false },
+  { label: 'Mes projets', icon: FolderClosed, route: { page: 'projets' }, disponible: true },
+  { label: 'Paramètres', icon: Settings, route: { page: 'parametres' }, disponible: true },
 ]
 
 function isActive(item: Route, current: Route) {
   // Un projet en cours de traitement appartient au parcours « Nouveau doublage »
-  if (current.page === 'projet') return item.page === 'nouveau'
+  if (current.page === 'projet' || current.page === 'edition') return item.page === 'nouveau'
   return item.page === current.page
 }
 
@@ -189,7 +189,7 @@ export function BottomPanel({ children }: { children: ReactNode }) {
 }
 
 export function Layout({ current, children }: { current: Route; children: ReactNode }) {
-  const pageKey = current.page === 'projet' ? `projet-${current.id}` : current.page
+  const pageKey = current.page === 'projet' || current.page === 'edition' ? `${current.page}-${current.id}` : current.page
   const [slot, setSlot] = useState<HTMLElement | null>(null)
   const [bottomActive, setActive] = useState(false)
   return (

@@ -298,7 +298,7 @@ def translate_segments(
         return [s["texte"] for s in segments], "identique"
 
     modele = get_runtime().ollama_model
-    if ollama_disponible(modele):
+    if modele != "nllb" and ollama_disponible(modele):
         logger.info("Traduction %s → %s avec Ollama %s", source, cible, modele)
         traductions: list[str] = []
         try:

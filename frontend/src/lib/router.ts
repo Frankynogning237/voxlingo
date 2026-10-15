@@ -8,6 +8,7 @@ export type Route =
   | { page: 'projets' }
   | { page: 'parametres' }
   | { page: 'projet'; id: string }
+  | { page: 'edition'; id: string }
 
 function parse(hash: string): Route {
   const parts = hash.replace(/^#\/?/, '').split('/').filter(Boolean)
@@ -15,6 +16,7 @@ function parse(hash: string): Route {
     case 'nouveau':
       return { page: 'nouveau' }
     case 'projets':
+      if (parts[1] && parts[2] === 'edition') return { page: 'edition', id: parts[1] }
       return parts[1] ? { page: 'projet', id: parts[1] } : { page: 'projets' }
     case 'parametres':
       return { page: 'parametres' }
@@ -39,6 +41,8 @@ export function href(route: Route): string {
       return '#/'
     case 'projet':
       return `#/projets/${route.id}`
+    case 'edition':
+      return `#/projets/${route.id}/edition`
     default:
       return `#/${route.page}`
   }

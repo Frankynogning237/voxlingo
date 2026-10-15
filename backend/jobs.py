@@ -20,19 +20,19 @@ from config import get_settings
 logger = logging.getLogger("voxlingo.jobs")
 
 JobState = Literal["en_attente", "en_cours", "a_valider", "termine", "erreur", "annule"]
-StepState = Literal["attente", "en_cours", "termine", "erreur", "a_venir"]
+StepState = Literal["attente", "en_cours", "termine", "erreur", "a_venir", "ignore"]
 
 # Étapes affichées dans l'interface, dans l'ordre du pipeline.
 # `disponible` passe à True au fil des phases de développement.
 STEPS: list[dict[str, Any]] = [
     {"cle": "extraction", "libelle": "Extraction audio", "disponible": True},
-    {"cle": "separation", "libelle": "Séparation voix / fond", "disponible": False},
+    {"cle": "separation", "libelle": "Séparation voix / fond", "disponible": True},
     {"cle": "transcription", "libelle": "Transcription", "disponible": True},
     {"cle": "locuteurs", "libelle": "Identification des locuteurs", "disponible": False},
     {"cle": "traduction", "libelle": "Traduction", "disponible": True},
-    {"cle": "voix", "libelle": "Génération des voix", "disponible": False},
+    {"cle": "voix", "libelle": "Génération des voix", "disponible": True},
     {"cle": "synchro_labiale", "libelle": "Synchronisation labiale", "disponible": False},
-    {"cle": "export", "libelle": "Export", "disponible": False},
+    {"cle": "export", "libelle": "Export", "disponible": True},
 ]
 
 _lock = threading.Lock()
@@ -76,6 +76,7 @@ def create_job(
         "moteur_traduction": None,
         "traduction_validee": False,
         "dernier_ajustement": None,
+        "fichier_sortie": None,
         "debut_traitement": None,
         "fin_traitement": None,
         "cree_le": _now(),
@@ -150,6 +151,14 @@ def write_segments(job_id: str, data: dict[str, Any]) -> None:
         tmp.replace(path)
 
 
+def strategie(status: dict[str, Any]) -> str:
+    """Stratégie face aux phrases trop longues : « reformuler » (par défaut) ou « accelerer »."""
+    from pipeline.segments import STRATEGIE_PAR_DEFAUT, STRATEGIES
+
+    choix = (status.get("options") or {}).get("strategie_duree")
+    return choix if choix in STRATEGIES else STRATEGIE_PAR_DEFAUT
+
+
 def list_jobs() -> list[dict[str, Any]]:
     """Historique des tâches, de la plus récente à la plus ancienne."""
     jobs = []
@@ -158,6 +167,30 @@ def list_jobs() -> list[dict[str, Any]]:
         if status:
             jobs.append(status)
     return sorted(jobs, key=lambda s: s["cree_le"], reverse=True)
+
+
+def delete_job(job_id: str) -> None:
+    """Supprime définitivement le projet et tous ses fichiers."""
+    import shutil
+
+    shutil.rmtree(project_dir(job_id))
+
+
+def duplicate_job(job_id: str) -> dict[str, Any]:
+    """Crée un nouveau projet avec la même vidéo et les mêmes réglages, puis lance le traitement."""
+    import shutil
+
+    source = read_status(job_id)
+    if source is None:
+        raise KeyError(job_id)
+    nouveau = new_job_id()
+    dossier = project_dir(nouveau)
+    dossier.mkdir(parents=True)
+    shutil.copy2(project_dir(job_id) / source["fichier"], dossier / source["fichier"])
+    status = create_job(nouveau, source["nom_fichier"], source["fichier"], source["langue_cible"],
+                        dict(source.get("options") or {}))
+    start_job(nouveau)
+    return status
 
 
 def start_job(job_id: str) -> None:
@@ -181,6 +214,13 @@ def start_adjustment(job_id: str, ids: set[int] | None) -> None:
     from pipeline.runner import run_adjustment
 
     threading.Thread(target=run_adjustment, args=(job_id, ids), name=f"ajust-{job_id}", daemon=True).start()
+
+
+def start_voices(job_id: str) -> None:
+    """Lance la génération des voix et l'export dans un thread en arrière-plan."""
+    from pipeline.runner import run_voices
+
+    threading.Thread(target=run_voices, args=(job_id,), name=f"voix-{job_id}", daemon=True).start()
 
 
 class JobCancelled(RuntimeError):

@@ -114,9 +114,54 @@ class Runtime:
             )
 
 
+FICHIER_PARAMETRES = ROOT_DIR / "data" / "parametres.json"
+
+# Réglages modifiables depuis la page Paramètres, avec leur valeur par défaut
+PARAMETRES_DEFAUT: dict[str, object] = {
+    "force_device": "auto",
+    "whisper_model": "auto",
+    "ollama_model": "auto",
+    "strategie_duree": "reformuler",
+    "sous_titres": True,
+    "conserver_fond": True,
+    "volume_fond": 100,
+}
+
+
+def lire_parametres() -> dict[str, object]:
+    """Réglages enregistrés depuis l'interface (data/parametres.json), complétés par les défauts."""
+    import json
+
+    valeurs = dict(PARAMETRES_DEFAUT)
+    if FICHIER_PARAMETRES.is_file():
+        try:
+            enregistres = json.loads(FICHIER_PARAMETRES.read_text(encoding="utf-8"))
+            valeurs.update({k: v for k, v in enregistres.items() if k in PARAMETRES_DEFAUT})
+        except ValueError:
+            logger.warning("parametres.json illisible : valeurs par défaut utilisées.")
+    return valeurs
+
+
+def ecrire_parametres(valeurs: dict[str, object]) -> None:
+    import json
+
+    FICHIER_PARAMETRES.parent.mkdir(parents=True, exist_ok=True)
+    FICHIER_PARAMETRES.write_text(json.dumps(valeurs, ensure_ascii=False, indent=2), encoding="utf-8")
+    get_settings.cache_clear()
+    get_runtime.cache_clear()
+
+
 @lru_cache
 def get_settings() -> Settings:
     settings = Settings()
+    # Les choix faits dans la page Paramètres priment sur .env
+    parametres = lire_parametres()
+    if parametres["force_device"] != "auto" or settings.force_device == "auto":
+        settings.force_device = parametres["force_device"]  # type: ignore[assignment]
+    if parametres["whisper_model"] != "auto":
+        settings.whisper_model = str(parametres["whisper_model"])
+    if parametres["ollama_model"] != "auto":
+        settings.ollama_model = str(parametres["ollama_model"])
     settings.projects_dir.mkdir(parents=True, exist_ok=True)
     settings.models_dir.mkdir(parents=True, exist_ok=True)
     return settings

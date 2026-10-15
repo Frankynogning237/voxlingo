@@ -25,6 +25,7 @@ import { LangueTag } from '@/components/Flag'
 import { Gradient, PageHeader } from '@/components/Layout'
 import { OutlineButton, PrimaryButton } from '@/components/PrimaryButton'
 import { Waveform } from '@/components/Waveform'
+import { Result } from '@/pages/Result'
 import { TranslationEditor } from '@/pages/TranslationEditor'
 import { cancelJob, getJob, getSegments, getWaveform, videoUrl, type Job, type Step } from '@/lib/api'
 import { formatDuree } from '@/lib/format'
@@ -134,6 +135,8 @@ function sousTitre(step: Step, job: Job) {
       return 'Échec'
     case 'a_venir':
       return 'Prochaine phase'
+    case 'ignore':
+      return 'Désactivée pour ce projet'
     default:
       return enCours(job) ? 'En attente…' : 'Non lancée'
   }
@@ -165,7 +168,7 @@ function StepsTimeline({ job }: { job: Job }) {
                 'mb-2 flex min-h-[60px] flex-1 items-center gap-4 rounded-xl px-4 py-2',
                 step.etat === 'en_cours' &&
                   'border-gradient shadow-[0_0_24px_rgba(124,92,255,0.25)] [--gradient-fill:#141532]',
-                step.etat === 'a_venir' && 'opacity-55',
+                (step.etat === 'a_venir' || step.etat === 'ignore') && 'opacity-55',
               )}
             >
               <Icon className="size-8 shrink-0 text-white/90" />
@@ -331,7 +334,7 @@ const SOUS_TITRES: Record<Job['etat'], string> = {
   annule: 'Le traitement a été arrêté à votre demande.',
 }
 
-export function Project({ id }: { id: string }) {
+export function Project({ id, edition = false }: { id: string; edition?: boolean }) {
   const video = useRef<HTMLVideoElement>(null)
   const { data: job, error } = useQuery({
     queryKey: ['job', id],
@@ -355,8 +358,13 @@ export function Project({ id }: { id: string }) {
   }
   if (!job) return <PageHeader back={{ page: 'accueil' }} backLabel="Traitement en cours" title="Chargement…" />
 
-  // Traduction prête (ou déjà validée) : écran d'édition de la traduction
-  if ((job.etat === 'a_valider' || job.etat === 'termine') && job.moteur_traduction) {
+  const traitementFini = job.etat === 'a_valider' || job.etat === 'termine'
+  // Vidéo doublée prête : écran Résultat (sauf si l'on revient corriger la traduction)
+  if (job.etat === 'termine' && job.fichier_sortie && !edition) {
+    return <Result job={job} />
+  }
+  // Traduction prête, ou retour volontaire à l'édition (même après une erreur de génération des voix)
+  if ((traitementFini || (edition && !enCours(job))) && job.moteur_traduction) {
     return <TranslationEditor job={job} />
   }
 
@@ -388,9 +396,15 @@ export function Project({ id }: { id: string }) {
           >
             {job.etat === 'erreur' ? <OctagonAlert className="size-6 shrink-0" /> : <CircleSlash className="size-6 shrink-0" />}
             <p className="flex-1">{job.erreur ?? 'Erreur inconnue.'}</p>
-            <PrimaryButton href={href({ page: 'nouveau' })}>
-              <RotateCcw className="size-4" /> Recommencer
-            </PrimaryButton>
+            {job.moteur_traduction ? (
+              <PrimaryButton href={href({ page: 'edition', id: job.id })}>
+                <RotateCcw className="size-4" /> Revenir à l'édition
+              </PrimaryButton>
+            ) : (
+              <PrimaryButton href={href({ page: 'nouveau' })}>
+                <RotateCcw className="size-4" /> Recommencer
+              </PrimaryButton>
+            )}
           </motion.div>
         )}
       </AnimatePresence>

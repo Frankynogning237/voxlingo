@@ -8,7 +8,7 @@ import { SystemStatus, useHealth } from '@/components/Layout'
 import { OutlineButton, PrimaryButton } from '@/components/PrimaryButton'
 import { ProjectCard } from '@/components/ProjectCard'
 import { listJobs } from '@/lib/api'
-import { href } from '@/lib/router'
+import { href, navigate } from '@/lib/router'
 import { cardVariants, staggerVariants } from '@/motion/variants'
 
 function RecentProjects() {
@@ -26,7 +26,7 @@ function RecentProjects() {
         <h2 className="flex items-center gap-3 text-[26px] font-medium text-white">
           <Clock3 className="size-7" strokeWidth={1.6} /> Projets récents
         </h2>
-        <OutlineButton disabled title="La page « Mes projets » arrive à la phase 9">
+        <OutlineButton onClick={() => navigate({ page: 'projets' })}>
           Voir tous mes projets <ArrowRight className="size-4" />
         </OutlineButton>
       </div>

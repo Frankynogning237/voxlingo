@@ -15,6 +15,12 @@ from pipeline.translate import compter_syllabes, debit
 ACCELERATION_MAX = 1.25  # atempo maximal accepté pour la voix doublée (phase 4)
 MARGE_S = 0.1  # respiration conservée avant la phrase suivante
 
+# XTTS v2 parle plus lentement qu'un humain : 4,6 syllabes/s mesurées en allemand, contre
+# 5,97 en moyenne pour la langue, soit ~0,77. On demande donc à XTTS de parler plus vite
+# (paramètre speed, jusqu'à ×1,35), puis atempo complète jusqu'à ×1,25 : capacité ×1,69.
+FACTEUR_DEBIT_XTTS = 0.77
+VITESSE_XTTS_MAX = 1.35
+
 # Découpage : on ne crée pas de morceaux trop courts pour être doublés naturellement
 DUREE_MIN_MORCEAU_S = 1.0
 DUREE_CIBLE_MORCEAU_S = 2.5
@@ -32,17 +38,48 @@ def marquer_fin_max(segments: list[dict[str, Any]], duree_video: float | None) -
         seg["fin_max"] = round(max(seg["fin"], limite), 2)
 
 
+def duree_voix_estimee(traduction: str, cible: str | None, vitesse: float = 1.0) -> float:
+    """Durée estimée de la phrase lue par XTTS à la vitesse donnée."""
+    return compter_syllabes(traduction) / (debit(cible) * FACTEUR_DEBIT_XTTS * vitesse)
+
+
+def vitesse_xtts(seg: dict[str, Any], traduction: str, cible: str | None) -> float:
+    """Vitesse de lecture à demander à XTTS pour que la phrase tienne dans son temps (1,0 à 1,35)."""
+    disponible = max(seg.get("fin_max", seg["fin"]) - seg["debut"], 0.1)
+    return round(min(VITESSE_XTTS_MAX, max(1.0, duree_voix_estimee(traduction, cible) / disponible)), 2)
+
+
+# Stratégie quand une traduction est trop longue pour son temps (option du projet) :
+#  - « reformuler » : la voix garde son débit naturel ; au-delà d'une légère tolérance,
+#    l'IA reformule la phrase plus brièvement, dans le même sens ;
+#  - « accelerer » : la voix est accélérée (XTTS ×1,35 puis atempo ×1,25) ; l'IA ne
+#    reformule qu'au-delà de cette capacité.
+STRATEGIES = ("reformuler", "accelerer")
+STRATEGIE_PAR_DEFAUT = "reformuler"
+TOLERANCE_REFORMULER = 1.08  # accélération imperceptible acceptée en mode « reformuler »
+
+
+def capacite(strategie: str | None) -> float:
+    """Accélération totale acceptée avant de considérer une phrase comme trop longue."""
+    if (strategie or STRATEGIE_PAR_DEFAUT) == "accelerer":
+        return VITESSE_XTTS_MAX * ACCELERATION_MAX
+    return TOLERANCE_REFORMULER
+
+
 def ratio_requis(seg: dict[str, Any], traduction: str, source: str | None, cible: str | None,
                  avec_silence: bool = True) -> float:
-    """Accélération nécessaire pour que la traduction tienne (1,0 = même vitesse que l'original)."""
-    duree_originale = max(seg["fin"] - seg["debut"], 0.1)
-    rapport = (compter_syllabes(traduction) / debit(cible)) / (compter_syllabes(seg["texte"]) / debit(source))
+    """Accélération totale nécessaire pour que la voix tienne (1,0 = débit naturel de XTTS).
+
+    `source` est conservé pour la compatibilité des appels : seule compte la durée de la voix
+    face au temps disponible (durée d'origine, plus le silence suivant si `avec_silence`).
+    """
     disponible = (seg.get("fin_max", seg["fin"]) if avec_silence else seg["fin"]) - seg["debut"]
-    return duree_originale * rapport / max(disponible, 0.1)
+    return duree_voix_estimee(traduction, cible) / max(disponible, 0.1)
 
 
-def est_trop_long(seg: dict[str, Any], traduction: str, source: str | None, cible: str | None) -> bool:
-    return ratio_requis(seg, traduction, source, cible) > ACCELERATION_MAX
+def est_trop_long(seg: dict[str, Any], traduction: str, source: str | None, cible: str | None,
+                  strategie: str | None = None) -> bool:
+    return ratio_requis(seg, traduction, source, cible) > capacite(strategie)
 
 
 def _texte(mots: list[dict[str, Any]]) -> str:

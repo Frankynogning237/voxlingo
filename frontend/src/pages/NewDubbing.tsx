@@ -10,6 +10,7 @@ import {
   Database,
   Info,
   Music,
+  PenLine,
   Play,
   Scissors,
   Search,
@@ -24,7 +25,7 @@ import { LipsIcon, Panel, Slider, Switch } from '@/components/Controls'
 import { Flag } from '@/components/Flag'
 import { Gradient, PageHeader } from '@/components/Layout'
 import { PrimaryButton } from '@/components/PrimaryButton'
-import { createJob, getHealth, type JobOptions } from '@/lib/api'
+import { createJob, getHealth, getSettings, type JobOptions } from '@/lib/api'
 import { formatDuree, formatTaille, nomLangue } from '@/lib/format'
 import { navigate } from '@/lib/router'
 import { cn } from '@/lib/utils'
@@ -348,7 +349,21 @@ export function NewDubbing() {
     sous_titres: true,
     volume_fond: 100,
     ajuster_trop_longs: true,
+    strategie_duree: 'reformuler',
   })
+  // Valeurs par défaut choisies dans la page Paramètres (appliquées une seule fois)
+  const { data: parametres } = useQuery({ queryKey: ['parametres'], queryFn: getSettings, retry: 0 })
+  const [defautsAppliques, setDefautsAppliques] = useState(false)
+  if (parametres && !defautsAppliques) {
+    setDefautsAppliques(true)
+    setOptions((o) => ({
+      ...o,
+      conserver_fond: parametres.valeurs.conserver_fond,
+      sous_titres: parametres.valeurs.sous_titres,
+      volume_fond: parametres.valeurs.volume_fond,
+      strategie_duree: parametres.valeurs.strategie_duree,
+    }))
+  }
   const [erreur, setErreur] = useState<string | null>(null)
   const [refus, setRefus] = useState(0)
   const [envoi, setEnvoi] = useState<number | null>(null)
@@ -417,7 +432,7 @@ export function NewDubbing() {
           <p className="mb-3 flex items-center gap-3 text-[17px] font-medium text-white">
             <Settings className="size-5" /> Options avancées
           </p>
-          <div className="grid gap-5 md:grid-cols-2 2xl:grid-cols-4">
+          <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
             <OptionCard
               icon={<Music className="size-6" />}
               label="Conserver le fond sonore"
@@ -445,6 +460,13 @@ export function NewDubbing() {
               aide="Après la traduction, chaque phrase trop longue pour son temps est réglée automatiquement : utilisation du silence qui suit, version plus courte proposée par l'IA, ou découpage en morceaux aux pauses naturelles."
               checked={options.ajuster_trop_longs}
               onChange={(v) => setOption('ajuster_trop_longs', v)}
+            />
+            <OptionCard
+              icon={<PenLine className="size-6" />}
+              label="Reformuler plutôt qu'accélérer"
+              aide="Activé : une phrase trop longue est reformulée plus brièvement par l'IA, dans le même sens, pour garder une voix au débit naturel (l'accélération ne sert qu'en dernier recours). Désactivé : la voix est d'abord accélérée, et l'IA ne reformule qu'au-delà."
+              checked={options.strategie_duree === 'reformuler'}
+              onChange={(v) => setOption('strategie_duree', v ? 'reformuler' : 'accelerer')}
             />
           </div>
         </motion.div>
