@@ -60,20 +60,58 @@ def make_thumbnail(video: Path, output: Path, duree_s: float) -> Path:
     return output
 
 
-def compute_peaks(audio: Path, nombre: int = 160) -> list[float]:
-    """Amplitudes réelles de l'audio (0 à 1), réparties en `nombre` barres pour la forme d'onde."""
+def make_filmstrip(video: Path, output: Path, duree_s: float, images: int = 24) -> Path:
+    """Bande d'images régulièrement espacées (une seule image JPEG) pour la timeline de l'éditeur.
+
+    Chaque image est prise par un accès direct à son instant (-ss avant -i) : le temps de
+    calcul ne dépend pas de la durée de la vidéo, même pour un film de plusieurs heures.
+    """
+    import tempfile
+    from concurrent.futures import ThreadPoolExecutor
+
+    ffmpeg = _require("ffmpeg")
+    with tempfile.TemporaryDirectory(prefix="voxlingo-bande-") as dossier:
+        def capturer(i: int) -> None:
+            instant = (i + 0.5) * duree_s / images
+            subprocess.run(
+                [ffmpeg, "-y", "-v", "error", "-ss", f"{instant:.2f}", "-i", str(video),
+                 "-frames:v", "1", "-vf", "scale=160:90:force_original_aspect_ratio=increase,crop=160:90",
+                 "-q:v", "5", str(Path(dossier) / f"image_{i:03d}.jpg")],
+                capture_output=True, text=True,
+            )
+
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            list(pool.map(capturer, range(images)))
+        result = subprocess.run(
+            [ffmpeg, "-y", "-v", "error", "-start_number", "0", "-i", str(Path(dossier) / "image_%03d.jpg"),
+             "-vf", f"tile={images}x1", "-frames:v", "1", "-q:v", "5", str(output)],
+            capture_output=True, text=True,
+        )
+    if result.returncode != 0:
+        logger.warning("Bande d'images impossible : %s", result.stderr.strip())
+    return output
+
+
+def compute_peaks(audio: Path, nombre: int = 1200) -> list[float]:
+    """Amplitudes réelles de l'audio (0 à 1), réparties en `nombre` barres pour la forme d'onde.
+
+    L'audio est lu bloc par bloc : la mémoire utilisée reste faible quelle que soit la durée.
+    """
     import wave
 
     import numpy as np
 
     with wave.open(str(audio), "rb") as wav:
-        samples = np.frombuffer(wav.readframes(wav.getnframes()), dtype=np.int16)
-    if samples.size == 0:
-        return [0.0] * nombre
-    blocs = np.array_split(np.abs(samples.astype(np.float32)), nombre)
-    peaks = np.array([b.max() if b.size else 0.0 for b in blocs])
-    maximum = peaks.max() or 1.0
-    return [round(float(p / maximum), 3) for p in peaks]
+        total = wav.getnframes()
+        if total == 0:
+            return [0.0] * nombre
+        peaks = []
+        for i in range(nombre):
+            taille = (total * (i + 1)) // nombre - (total * i) // nombre
+            bloc = np.frombuffer(wav.readframes(taille), dtype=np.int16)
+            peaks.append(float(np.abs(bloc.astype(np.int32)).max()) if bloc.size else 0.0)
+    maximum = max(peaks) or 1.0
+    return [round(p / maximum, 3) for p in peaks]
 
 
 def extract_audio(video: Path, output: Path) -> Path:

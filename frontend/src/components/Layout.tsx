@@ -1,7 +1,8 @@
 import { useQuery } from '@tanstack/react-query'
 import { AnimatePresence, motion } from 'framer-motion'
 import { ArrowLeft, ChevronDown, CirclePlus, FolderClosed, House, Info, Settings, type LucideIcon } from 'lucide-react'
-import type { ReactNode } from 'react'
+import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 
 import { Logo, NeonWaves } from '@/components/Brand'
 import { getHealth } from '@/lib/api'
@@ -63,11 +64,11 @@ function NavLink({ item, active }: { item: NavItem; active: boolean }) {
   )
 }
 
-function UserFooter() {
+export function UserFooter({ bordered = true }: { bordered?: boolean }) {
   const { data } = useHealth()
   const nom = data?.nom_utilisateur?.trim()
   return (
-    <div className="relative mt-auto border-t border-white/10 px-2 pt-6">
+    <div className={cn('relative px-2', bordered && 'mt-auto border-t border-white/10 pt-6')}>
       <div className="flex items-center gap-3">
         <span className="flex size-11 items-center justify-center rounded-full bg-linear-to-br from-violet-600 to-indigo-600 text-lg font-medium text-white">
           {(nom?.[0] ?? 'V').toUpperCase()}
@@ -84,7 +85,7 @@ function UserFooter() {
   )
 }
 
-function Sidebar({ current }: { current: Route }) {
+function Sidebar({ current, footer }: { current: Route; footer: boolean }) {
   return (
     <motion.aside
       initial={{ opacity: 0, x: -8 }}
@@ -101,7 +102,7 @@ function Sidebar({ current }: { current: Route }) {
           <NavLink key={item.label} item={item} active={isActive(item.route, current)} />
         ))}
       </nav>
-      <UserFooter />
+      {footer && <UserFooter />}
     </motion.aside>
   )
 }
@@ -169,11 +170,33 @@ export function Gradient({ children }: { children: ReactNode }) {
   return <span className="text-gradient">{children}</span>
 }
 
+/**
+ * Zone pleine largeur sous le menu et le contenu (timeline de l'éditeur, maquette
+ * « Translation Editor »). Une page y affiche son contenu avec <BottomPanel>.
+ */
+const BottomSlotContext = createContext<{
+  slot: HTMLElement | null
+  setActive: (active: boolean) => void
+}>({ slot: null, setActive: () => {} })
+
+export function BottomPanel({ children }: { children: ReactNode }) {
+  const { slot, setActive } = useContext(BottomSlotContext)
+  useEffect(() => {
+    setActive(true)
+    return () => setActive(false)
+  }, [setActive])
+  return slot ? createPortal(children, slot) : null
+}
+
 export function Layout({ current, children }: { current: Route; children: ReactNode }) {
   const pageKey = current.page === 'projet' ? `projet-${current.id}` : current.page
+  const [slot, setSlot] = useState<HTMLElement | null>(null)
+  const [bottomActive, setActive] = useState(false)
   return (
-    <div className="flex h-svh overflow-hidden bg-background text-foreground">
-      <Sidebar current={current} />
+    <BottomSlotContext.Provider value={{ slot, setActive }}>
+    <div className="flex h-svh flex-col overflow-hidden bg-background text-foreground">
+    <div className="flex min-h-0 flex-1">
+      <Sidebar current={current} footer={!bottomActive} />
       <main className="relative flex-1 overflow-y-auto">
         <NeonWaves flip className="absolute -top-16 right-0 h-64 w-[520px] opacity-40" />
         <AnimatePresence mode="wait">
@@ -190,5 +213,8 @@ export function Layout({ current, children }: { current: Route; children: ReactN
         </AnimatePresence>
       </main>
     </div>
+    <div ref={setSlot} className={cn(bottomActive && 'border-t border-sidebar-border bg-sidebar')} />
+    </div>
+    </BottomSlotContext.Provider>
   )
 }

@@ -1,4 +1,4 @@
-# Lance VoxLingo : backend FastAPI (port 8000) + frontend React (port 5173).
+﻿# Lance VoxLingo : backend FastAPI (port 8000) + frontend React (port 5173).
 # Usage, depuis la racine du projet :  .\start.ps1
 # Ctrl+C dans cette fenêtre arrête les deux serveurs.
 
@@ -22,10 +22,13 @@ if (-not (Test-Path (Join-Path $root 'frontend\node_modules'))) {
     Push-Location (Join-Path $root 'frontend'); npm install; Pop-Location
 }
 
-Write-Host 'Démarrage du backend  : http://localhost:8000' -ForegroundColor Cyan
-$backend = Start-Process -FilePath $python `
+# Le backend tourne dans sa propre fenêtre (réduite) : au rechargement automatique,
+# uvicorn envoie Ctrl+C à toute sa console, ce qui arrêterait aussi le frontend.
+# Ses journaux sont aussi écrits dans data/logs/voxlingo.log.
+Write-Host 'Démarrage du backend  : http://localhost:8000 (fenêtre « VoxLingo API » réduite)' -ForegroundColor Cyan
+$backend = Start-Process -FilePath $python -WindowStyle Minimized `
     -ArgumentList '-m', 'uvicorn', 'main:app', '--host', '127.0.0.1', '--port', '8000', '--reload', '--reload-exclude', 'tests/*' `
-    -WorkingDirectory (Join-Path $root 'backend') -NoNewWindow -PassThru
+    -WorkingDirectory (Join-Path $root 'backend') -PassThru
 
 Write-Host 'Démarrage du frontend : http://localhost:5173' -ForegroundColor Cyan
 $frontend = Start-Process -FilePath 'cmd.exe' -ArgumentList '/c', 'npm run dev' `

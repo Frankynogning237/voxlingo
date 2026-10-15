@@ -1,11 +1,21 @@
 // Forme d'onde réelle de l'audio (amplitudes calculées par le backend),
 // colorée en dégradé violet → cyan. La partie déjà lue suit l'horloge du lecteur vidéo.
-import { useEffect, useId, useState, type RefObject } from 'react'
+import { useEffect, useId, useMemo, useState, type RefObject } from 'react'
 
 import { cn } from '@/lib/utils'
 
+/** Regroupe les amplitudes (maximum par groupe) pour garder des barres lisibles. */
+export function reduirePics(peaks: number[], barres: number): number[] {
+  if (peaks.length <= barres) return peaks
+  return Array.from({ length: barres }, (_, i) => {
+    const debut = Math.floor((i * peaks.length) / barres)
+    const fin = Math.floor(((i + 1) * peaks.length) / barres)
+    return Math.max(...peaks.slice(debut, Math.max(fin, debut + 1)))
+  })
+}
+
 export function Waveform({
-  peaks,
+  peaks: toutesLesAmplitudes,
   videoRef,
   className,
   onSeek,
@@ -17,6 +27,7 @@ export function Waveform({
 }) {
   const id = useId()
   const [lu, setLu] = useState(0)
+  const peaks = useMemo(() => reduirePics(toutesLesAmplitudes, 160), [toutesLesAmplitudes])
 
   // Position de lecture pilotée par le lecteur vidéo (pas d'animation indépendante)
   useEffect(() => {

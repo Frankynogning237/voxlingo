@@ -19,7 +19,7 @@ from config import get_settings
 
 logger = logging.getLogger("voxlingo.jobs")
 
-JobState = Literal["en_attente", "en_cours", "termine", "erreur", "annule"]
+JobState = Literal["en_attente", "en_cours", "a_valider", "termine", "erreur", "annule"]
 StepState = Literal["attente", "en_cours", "termine", "erreur", "a_venir"]
 
 # Étapes affichées dans l'interface, dans l'ordre du pipeline.
@@ -29,7 +29,7 @@ STEPS: list[dict[str, Any]] = [
     {"cle": "separation", "libelle": "Séparation voix / fond", "disponible": False},
     {"cle": "transcription", "libelle": "Transcription", "disponible": True},
     {"cle": "locuteurs", "libelle": "Identification des locuteurs", "disponible": False},
-    {"cle": "traduction", "libelle": "Traduction", "disponible": False},
+    {"cle": "traduction", "libelle": "Traduction", "disponible": True},
     {"cle": "voix", "libelle": "Génération des voix", "disponible": False},
     {"cle": "synchro_labiale", "libelle": "Synchronisation labiale", "disponible": False},
     {"cle": "export", "libelle": "Export", "disponible": False},
@@ -73,6 +73,9 @@ def create_job(
         "progression_etape": 0,
         "erreur": None,
         "annulation_demandee": False,
+        "moteur_traduction": None,
+        "traduction_validee": False,
+        "dernier_ajustement": None,
         "debut_traitement": None,
         "fin_traitement": None,
         "cree_le": _now(),
@@ -128,6 +131,25 @@ def update_step(job_id: str, cle: str, **changes: Any) -> None:
     write_status(job_id, status)
 
 
+def _segments_path(job_id: str) -> Path:
+    return project_dir(job_id) / "segments.json"
+
+
+def read_segments(job_id: str) -> dict[str, Any]:
+    """Transcription et traductions : {langue, duree_s, segments: [{id, debut, fin, texte, traduction…}]}."""
+    path = _segments_path(job_id)
+    with _lock:
+        return json.loads(path.read_text(encoding="utf-8"))
+
+
+def write_segments(job_id: str, data: dict[str, Any]) -> None:
+    path = _segments_path(job_id)
+    tmp = path.with_suffix(".tmp")
+    with _lock:
+        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.replace(path)
+
+
 def list_jobs() -> list[dict[str, Any]]:
     """Historique des tâches, de la plus récente à la plus ancienne."""
     jobs = []
@@ -145,6 +167,20 @@ def start_job(job_id: str) -> None:
     thread = threading.Thread(target=run_pipeline, args=(job_id,), name=f"job-{job_id}", daemon=True)
     thread.start()
     logger.info("Tâche %s lancée", job_id)
+
+
+def start_translation(job_id: str) -> None:
+    """Relance uniquement l'étape de traduction dans un thread en arrière-plan."""
+    from pipeline.runner import run_translation
+
+    threading.Thread(target=run_translation, args=(job_id,), name=f"trad-{job_id}", daemon=True).start()
+
+
+def start_adjustment(job_id: str, ids: set[int] | None) -> None:
+    """Lance l'ajustement des phrases trop longues dans un thread en arrière-plan."""
+    from pipeline.runner import run_adjustment
+
+    threading.Thread(target=run_adjustment, args=(job_id, ids), name=f"ajust-{job_id}", daemon=True).start()
 
 
 class JobCancelled(RuntimeError):

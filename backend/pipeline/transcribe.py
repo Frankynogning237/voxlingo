@@ -1,7 +1,8 @@
 """Transcription et détection de langue avec faster-whisper.
 
 Le modèle est chargé pour la tâche puis déchargé, pour libérer la mémoire
-avant les étapes suivantes. L'horodatage au mot via WhisperX arrive en phase 6.
+avant les étapes suivantes. Le minutage de chaque mot est conservé : il sert
+à redécouper précisément les phrases trop longues (pipeline/segments.py).
 """
 
 from __future__ import annotations
@@ -9,7 +10,7 @@ from __future__ import annotations
 import gc
 import logging
 from collections.abc import Callable
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from config import get_runtime, get_settings
@@ -23,6 +24,7 @@ class Segment:
     debut: float
     fin: float
     texte: str
+    mots: list[dict] = field(default_factory=list)  # [{"mot", "debut", "fin"}]
 
 
 @dataclass
@@ -34,6 +36,34 @@ class Transcription:
 
     def to_dict(self) -> dict:
         return asdict(self)
+
+
+FIN_DE_PHRASE = (".", "!", "?", "…", ":", ";", "。", "！", "？")
+ECART_MAX_S = 0.6  # silence maximal entre deux morceaux d'une même phrase
+DUREE_MAX_S = 15.0  # au-delà, on garde les segments séparés
+
+
+def fusionner_fragments(segments: list[Segment]) -> list[Segment]:
+    """Recolle les phrases coupées par Whisper (« …into another » + « language. »).
+
+    Traduire une phrase entière donne une traduction bien meilleure qu'un morceau isolé.
+    """
+    fusion: list[Segment] = []
+    for seg in segments:
+        prec = fusion[-1] if fusion else None
+        if (
+            prec is not None
+            and not prec.texte.rstrip().endswith(FIN_DE_PHRASE)
+            and seg.debut - prec.fin <= ECART_MAX_S
+            and seg.fin - prec.debut <= DUREE_MAX_S
+        ):
+            prec.fin = seg.fin
+            prec.texte = f"{prec.texte} {seg.texte}".strip()
+            prec.mots.extend(seg.mots)
+        else:
+            fusion.append(Segment(id=len(fusion), debut=seg.debut, fin=seg.fin, texte=seg.texte,
+                                  mots=list(seg.mots)))
+    return fusion
 
 
 def transcribe(audio: Path, on_progress: Callable[[float], None] | None = None) -> Transcription:
@@ -50,13 +80,20 @@ def transcribe(audio: Path, on_progress: Callable[[float], None] | None = None) 
         download_root=str(get_settings().models_dir / "whisper"),
     )
     try:
-        segments_iter, info = model.transcribe(str(audio), vad_filter=True, beam_size=5)
+        segments_iter, info = model.transcribe(
+            str(audio), vad_filter=True, beam_size=5, word_timestamps=True
+        )
         logger.info("Langue détectée : %s (%.0f %%)", info.language, info.language_probability * 100)
 
         segments: list[Segment] = []
         for i, seg in enumerate(segments_iter):
+            mots = [
+                {"mot": w.word.strip(), "debut": round(w.start, 2), "fin": round(w.end, 2)}
+                for w in (seg.words or [])
+                if w.word.strip()
+            ]
             segments.append(Segment(id=i, debut=round(seg.start, 2), fin=round(seg.end, 2),
-                                    texte=seg.text.strip()))
+                                    texte=seg.text.strip(), mots=mots))
             if on_progress and info.duration:
                 on_progress(min(seg.end / info.duration, 1.0))
 
@@ -64,7 +101,7 @@ def transcribe(audio: Path, on_progress: Callable[[float], None] | None = None) 
             langue=info.language,
             probabilite=round(info.language_probability, 3),
             duree_s=round(info.duration, 2),
-            segments=segments,
+            segments=fusionner_fragments(segments),
         )
     finally:
         del model

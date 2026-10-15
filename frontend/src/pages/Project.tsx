@@ -25,6 +25,7 @@ import { LangueTag } from '@/components/Flag'
 import { Gradient, PageHeader } from '@/components/Layout'
 import { OutlineButton, PrimaryButton } from '@/components/PrimaryButton'
 import { Waveform } from '@/components/Waveform'
+import { TranslationEditor } from '@/pages/TranslationEditor'
 import { cancelJob, getJob, getSegments, getWaveform, videoUrl, type Job, type Step } from '@/lib/api'
 import { formatDuree } from '@/lib/format'
 import { href } from '@/lib/router'
@@ -324,6 +325,7 @@ function Titre({ job }: { job: Job }) {
 const SOUS_TITRES: Record<Job['etat'], string> = {
   en_attente: "L'IA de VoxLingo analyse, traduit et prépare votre doublage. Cela peut prendre quelques minutes.",
   en_cours: "L'IA de VoxLingo analyse, traduit et prépare votre doublage. Cela peut prendre quelques minutes.",
+  a_valider: 'La traduction est prête à être relue.',
   termine: 'La langue a été détectée et chaque phrase transcrite. Cliquez sur une phrase pour la réécouter.',
   erreur: 'Une étape du traitement a rencontré un problème.',
   annule: 'Le traitement a été arrêté à votre demande.',
@@ -352,6 +354,11 @@ export function Project({ id }: { id: string }) {
     )
   }
   if (!job) return <PageHeader back={{ page: 'accueil' }} backLabel="Traitement en cours" title="Chargement…" />
+
+  // Traduction prête (ou déjà validée) : écran d'édition de la traduction
+  if ((job.etat === 'a_valider' || job.etat === 'termine') && job.moteur_traduction) {
+    return <TranslationEditor job={job} />
+  }
 
   const seek = (t: number) => {
     if (!video.current) return

@@ -11,6 +11,7 @@ import {
   Info,
   Music,
   Play,
+  Scissors,
   Search,
   Settings,
   Trash2,
@@ -29,14 +30,13 @@ import { navigate } from '@/lib/router'
 import { cn } from '@/lib/utils'
 import { badgeVariants, cardVariants, staggerVariants, voxTransition } from '@/motion/variants'
 
-const EXTENSIONS = ['.mp4', '.mov', '.mkv', '.webm']
-const TAILLE_MAX = 2 * 1024 ** 3
+// Aucune limite de taille ni de durée : seul l'espace disque libre compte (vérifié par le serveur)
+const EXTENSIONS = ['.mp4', '.mov', '.mkv', '.webm', '.avi', '.m4v', '.wmv', '.flv', '.ts', '.mpg', '.mpeg']
 const LANGUES_VISIBLES = ['fr', 'de', 'es', 'it']
 
 function verifierFichier(file: File): string | null {
   const ext = file.name.slice(file.name.lastIndexOf('.')).toLowerCase()
-  if (!EXTENSIONS.includes(ext)) return 'Format non pris en charge : utilisez MP4, MOV, MKV ou WEBM.'
-  if (file.size > TAILLE_MAX) return 'Vidéo trop lourde : 2 Go maximum.'
+  if (!EXTENSIONS.includes(ext)) return 'Format non pris en charge : utilisez MP4, MOV, MKV, WEBM, AVI, M4V, WMV, FLV, TS ou MPG.'
   return null
 }
 
@@ -126,7 +126,7 @@ function DropZone({ onFile, refus }: { onFile: (file: File) => void; refus: bool
       <p className="relative mt-7 text-[24px] font-semibold text-white">Glissez-déposez votre vidéo ici</p>
       <p className="relative mt-1 text-[17px] text-white/75">ou cliquez pour parcourir vos fichiers</p>
       <p className="relative mt-7 text-[15px] text-white/75">
-        Formats supportés : MP4, MOV, MKV, WEBM <span className="mx-1.5">•</span> Taille max : 2 Go
+        Formats supportés : MP4, MOV, AVI, MKV, WEBM… <span className="mx-1.5">•</span> Courtes ou longues vidéos
       </p>
       <input
         ref={input}
@@ -347,6 +347,7 @@ export function NewDubbing() {
     synchro_labiale: false,
     sous_titres: true,
     volume_fond: 100,
+    ajuster_trop_longs: true,
   })
   const [erreur, setErreur] = useState<string | null>(null)
   const [refus, setRefus] = useState(0)
@@ -416,7 +417,7 @@ export function NewDubbing() {
           <p className="mb-3 flex items-center gap-3 text-[17px] font-medium text-white">
             <Settings className="size-5" /> Options avancées
           </p>
-          <div className="grid gap-5 lg:grid-cols-3">
+          <div className="grid gap-5 md:grid-cols-2 2xl:grid-cols-4">
             <OptionCard
               icon={<Music className="size-6" />}
               label="Conserver le fond sonore"
@@ -437,6 +438,13 @@ export function NewDubbing() {
               aide="Produit un fichier .srt dans la langue cible (phase 4)."
               checked={options.sous_titres}
               onChange={(v) => setOption('sous_titres', v)}
+            />
+            <OptionCard
+              icon={<Scissors className="size-6" />}
+              label="Ajuster les phrases trop longues"
+              aide="Après la traduction, chaque phrase trop longue pour son temps est réglée automatiquement : utilisation du silence qui suit, version plus courte proposée par l'IA, ou découpage en morceaux aux pauses naturelles."
+              checked={options.ajuster_trop_longs}
+              onChange={(v) => setOption('ajuster_trop_longs', v)}
             />
           </div>
         </motion.div>

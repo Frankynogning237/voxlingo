@@ -55,9 +55,21 @@ Copy-Item .env.example .env
 - Interface : http://localhost:5173
 - API : http://localhost:8000 (état du système : http://localhost:8000/health)
 
-`Ctrl+C` arrête les deux serveurs.
+`Ctrl+C` arrête les deux serveurs. Le backend tourne dans une fenêtre réduite « VoxLingo API » ; ses journaux sont aussi écrits dans `data/logs/voxlingo.log`.
 
 Si PowerShell refuse d'exécuter le script : `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`.
+
+## Vidéos acceptées
+
+MP4, MOV, MKV, WEBM, AVI, M4V, WMV, FLV, TS et MPG, **sans limite de taille ni de durée** : seul l'espace disque compte (au moins 2 Go doivent rester libres). Les traitements lisent l'audio et la vidéo par morceaux, pour rester légers en mémoire même sur un film de plusieurs heures.
+
+En mode CPU, comptez environ une minute de calcul par minute de vidéo pour la transcription et la traduction (plus pour les phases suivantes).
+
+## Traduction
+
+La traduction se fait phrase par phrase avec Ollama (`qwen2.5:3b` en mode CPU, `qwen2.5:7b` avec une carte NVIDIA ≥ 8 Go), en donnant au modèle les phrases voisines comme contexte et une longueur cible. Si Ollama ne répond pas, NLLB-200 prend le relais automatiquement.
+
+Le traitement s'arrête ensuite sur l'écran **Édition de la traduction** : chaque traduction est modifiable, l'alerte « Trop long » signale les phrases que la voix ne pourra pas prononcer dans le temps d'origine (plus de 25 % de syllabes en plus), et « Valider et générer les voix » lance la suite.
 
 ## Modes de fonctionnement
 
@@ -85,7 +97,7 @@ models/    Modèles téléchargés (ignoré par Git)
 - [x] Phase 0 — Diagnostic de la machine
 - [x] Phase 1 — Squelette du projet et environnement
 - [x] Phase 2 — Téléversement, tâches et transcription
-- [ ] Phase 3 — Traduction contextuelle locale
+- [x] Phase 3 — Traduction contextuelle locale
 - [ ] Phase 4 — Voix clonée et assemblage
 - [ ] Phase 5 — Conservation du fond sonore
 - [ ] Phase 6 — Plusieurs locuteurs

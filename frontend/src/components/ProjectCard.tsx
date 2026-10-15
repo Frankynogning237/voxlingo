@@ -1,6 +1,6 @@
 // Carte « Projet récent » (maquette Accueil) : miniature, langues, statut.
 import { motion } from 'framer-motion'
-import { ArrowRight, CircleCheck, CircleSlash, EllipsisVertical, Film, OctagonAlert } from 'lucide-react'
+import { ArrowRight, CircleCheck, PencilLine, CircleSlash, EllipsisVertical, Film, OctagonAlert } from 'lucide-react'
 import { useState } from 'react'
 
 import { Flag } from '@/components/Flag'
@@ -42,6 +42,12 @@ function Statut({ job }: { job: Job }) {
           <span className="text-success">Terminé</span>
           <span className="text-white/60">•</span>
           <span className="whitespace-nowrap text-white/80">{formatIlYa(job.fin_traitement ?? job.maj_le)}</span>
+        </span>
+      )
+    case 'a_valider':
+      return (
+        <span className="flex items-center gap-2 text-[15px] text-violet-300">
+          <PencilLine className="size-5" /> Traduction à relire
         </span>
       )
     case 'erreur':
