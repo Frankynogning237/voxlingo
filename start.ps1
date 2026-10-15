@@ -24,7 +24,7 @@ if (-not (Test-Path (Join-Path $root 'frontend\node_modules'))) {
 
 Write-Host 'Démarrage du backend  : http://localhost:8000' -ForegroundColor Cyan
 $backend = Start-Process -FilePath $python `
-    -ArgumentList '-m', 'uvicorn', 'main:app', '--host', '127.0.0.1', '--port', '8000' `
+    -ArgumentList '-m', 'uvicorn', 'main:app', '--host', '127.0.0.1', '--port', '8000', '--reload', '--reload-exclude', 'tests/*' `
     -WorkingDirectory (Join-Path $root 'backend') -NoNewWindow -PassThru
 
 Write-Host 'Démarrage du frontend : http://localhost:5173' -ForegroundColor Cyan

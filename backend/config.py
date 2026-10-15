@@ -71,6 +71,9 @@ class Settings(BaseSettings):
         "nl", "cs", "ar", "zh-cn", "ja", "hu", "ko", "hi",
     ]
 
+    # Prénom affiché dans l'interface ("Bonjour …")
+    nom_utilisateur: str = ""
+
     # Jeton Hugging Face (phase 6), uniquement dans .env
     hf_token: str | None = None
 

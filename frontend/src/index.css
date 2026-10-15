@@ -1,13 +1,14 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
-@import "@fontsource-variable/geist";
+@import "@fontsource-variable/inter";
+@import "flag-icons/css/flag-icons.min.css";
 
 @custom-variant dark (&:is(.dark *));
 
 @theme inline {
     --font-heading: var(--font-sans);
-    --font-sans: 'Geist Variable', sans-serif;
+    --font-sans: 'Inter Variable', Inter, sans-serif;
     --color-sidebar-ring: var(--sidebar-ring);
     --color-sidebar-border: var(--sidebar-border);
     --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -128,16 +129,19 @@
     @apply font-sans;
     }
 }
-/* Identité VoxLingo : thème sombre par défaut, dégradé violet → cyan */
+/* ───────────── Identité VoxLingo (maquettes de reference/) ───────────── */
 @theme inline {
     --color-brand-from: var(--brand-from);
+    --color-brand-via: var(--brand-via);
     --color-brand-to: var(--brand-to);
     --color-success: var(--success);
     --color-warning: var(--warning);
+    --ease-vox: cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 :root {
-    --brand-from: #7c5cff;
+    --brand-from: #8b5cf6;
+    --brand-via: #d946ef;
     --brand-to: #22d3ee;
     --success: #16a34a;
     --warning: #d97706;
@@ -150,24 +154,61 @@
 .dark {
     --success: #22c55e;
     --warning: #f59e0b;
-    --background: #0b0d12;
-    --card: #141821;
-    --popover: #141821;
-    --border: #232836;
+    --destructive: #ef4444;
+    --background: #07090f;
+    --foreground: #f4f5fa;
+    --card: #0e1119;
+    --card-foreground: #f4f5fa;
+    --popover: #121620;
+    --border: #1e2331;
     --input: #232836;
-    --secondary: #1b2030;
-    --muted: #1b2030;
-    --accent: #1b2030;
+    --secondary: #161a25;
+    --muted: #161a25;
+    --muted-foreground: #a3a9bb;
+    --accent: #171b27;
     --primary: #7c5cff;
     --primary-foreground: #ffffff;
     --ring: #7c5cff;
-    --sidebar: #0f1218;
-    --sidebar-border: #232836;
+    --sidebar: #090b11;
+    --sidebar-border: #1a1e2a;
+}
+
+body {
+    background: var(--background);
+    -webkit-font-smoothing: antialiased;
+}
+
+@utility text-gradient {
+    background-image: linear-gradient(90deg, #e45cf0 0%, #9b6bff 45%, #22d3ee 100%);
+    background-clip: text;
+    -webkit-background-clip: text;
+    color: transparent;
+}
+
+@utility bg-brand-gradient {
+    background-image: linear-gradient(90deg, #8b5cf6 0%, #22d3ee 100%);
+}
+
+/* Bordure dégradée violet → cyan (élément actif du menu, cartes mises en avant) */
+@utility border-gradient {
+    border: 1px solid transparent;
+    background:
+        linear-gradient(var(--gradient-fill, #0e1119), var(--gradient-fill, #0e1119)) padding-box,
+        linear-gradient(90deg, #a855f7, #22d3ee) border-box;
+}
+
+/* Surface "verre" des panneaux */
+@utility glass {
+    background: color-mix(in oklab, var(--card) 78%, transparent);
+    backdrop-filter: blur(12px);
+    border: 1px solid var(--border);
 }
 
 @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after {
         animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
         transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
     }
 }

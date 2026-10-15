@@ -84,7 +84,7 @@ models/    Modèles téléchargés (ignoré par Git)
 
 - [x] Phase 0 — Diagnostic de la machine
 - [x] Phase 1 — Squelette du projet et environnement
-- [ ] Phase 2 — Téléversement, tâches et transcription
+- [x] Phase 2 — Téléversement, tâches et transcription
 - [ ] Phase 3 — Traduction contextuelle locale
 - [ ] Phase 4 — Voix clonée et assemblage
 - [ ] Phase 5 — Conservation du fond sonore

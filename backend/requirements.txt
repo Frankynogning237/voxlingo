@@ -3,3 +3,4 @@ uvicorn[standard]>=0.32
 python-multipart>=0.0.12
 pydantic-settings>=2.6
 numpy>=2.1
+faster-whisper>=1.1
