@@ -1,0 +1,11 @@
+# Environnement conda du backend VoxLingo (Python 3.11).
+# Création : conda env create -f backend/environment.yml
+# PyTorch est installé ensuite selon le matériel (CUDA ou CPU), voir README.md.
+name: dubbing
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - pip:
+      - -r requirements.txt

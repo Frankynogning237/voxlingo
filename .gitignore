@@ -1,0 +1,30 @@
+# Données et modèles (lourds, jamais dans Git)
+data/
+models/
+*.mp4
+*.mov
+*.mkv
+*.webm
+*.wav
+*.mp3
+
+# Secrets
+.env
+
+# Node
+node_modules/
+frontend/dist/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+env/
+.pytest_cache/
+
+# Éditeurs / système
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store

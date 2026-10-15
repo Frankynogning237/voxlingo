@@ -1,0 +1,620 @@
+DOCUMENT TECHNIQUE · UI MOTION SYSTEM · React + Framer Motion + Tailwind CSS
+L'objectif est de donner à VoxLingo une sensation de fluidité et de précision professionnelle, sans ralentir les tâches de doublage ni distraire l'utilisateur pendant le traitement vidéo.
+La règle centrale : chaque animation doit communiquer un état, guider une action ou confirmer un résultat. Les animations décoratives restent rares, subtiles et désactivables.
+1. Principes du système de mouvement
+- Courbe standard : cubic-bezier(0.22, 1, 0.36, 1), une accélération initiale suivie d'une décélération douce.
+- Durées : généralement 200–600 ms pour les transitions visuelles. Les animations continues, comme les ondes audio, suivent le média en temps réel.
+- Déplacement : entre 2 et 12 px pour les transitions d'interface.
+- Échelle : variations légères, généralement de 0.98 à 1.02.
+- Opacité : privilégiée pour éviter les mouvements excessifs.
+- GPU : privilégier transform et opacity plutôt que l'animation de dimensions, de marges ou de positions de mise en page.
+- Cohérence : une même action doit toujours produire le même type de réponse visuelle dans tout le logiciel.
+Tokens d'animation
+Token	Durée	Utilisation
+motion-fast	200 ms	Survol, focus, changement d'icône
+motion-base	300 ms	Boutons, menus, notifications
+motion-page	400 ms	Apparition des pages et panneaux
+motion-emphasis	500 ms	Cartes, modales, comparateur
+motion-celebration	600 ms	Confirmation finale, accent visuel
+Courbe par défaut :
+--ease-vox: cubic-bezier(0.22, 1, 0.36, 1);
+
+
+Pour les animations répétées, les délais et durées peuvent être adaptés au contexte, notamment pour les ondes audio, le traitement IA et les particules de célébration.
+2. Catalogue complet des animations
+Voici les spécifications applicables à tous les écrans : Accueil, Nouveau doublage, Édition de la traduction, Traitement, Locuteurs, Résultat, Mes projets et Paramètres.
+A. Navigation et structure générale
+Élément	Déclencheur	Effet	Durée	Easing
+Apparition d'une page	Navigation	Fondu de 0 à 1 et montée de 8 px	400 ms	Vox
+Disparition d'une page	Navigation sortante	Fondu et déplacement de −4 px	200 ms	easeIn
+Cartes de contenu	Chargement initial	Apparition progressive, décalage de 40 ms entre cartes	300 ms chacune	Vox
+Barre latérale	Ouverture de l'application	Fondu, déplacement horizontal de −8 à 0 px	400 ms	Vox
+Élément actif de navigation	Changement de section	Fond qui apparaît progressivement, lueur subtile	250 ms	Vox
+Infobulle	Survol après 350 ms	Fondu et montée de 4 px	200 ms	Vox
+Menu contextuel	Clic sur « … »	Fondu, échelle de 0,96 à 1, montée de 4 px	200 ms	Vox
+Modale	Ouverture	Fondu du fond, montée de 12 px du panneau	300 ms	Vox
+Fermeture de modale	Échap ou clic de fermeture	Fondu et légère réduction d'échelle	200 ms	easeIn
+Changement de thème	Sélection sombre/clair	Transition des couleurs de surface et du texte	250 ms	Vox
+Règle d'implémentation : ne pas animer l'intégralité de la sidebar à chaque navigation. Seul le contenu central et l'indicateur de navigation doivent changer.
+B. Cartes, boutons et contrôles
+Élément	Déclencheur	Effet	Durée	Easing
+Carte de projet	Survol	Élévation de 3 px, ombre douce, bordure plus lumineuse	250 ms	Vox
+Carte de locuteur	Survol	Élévation de 2 px et accent sur la couleur du locuteur	250 ms	Vox
+Carte sélectionnée	Clic	Bordure accentuée et fond légèrement renforcé	200 ms	Vox
+Bouton principal	Survol	Lueur violette-cyan et léger déplacement vertical de −1 px	200 ms	Vox
+Bouton principal	Clic	Échelle de 0,98 puis retour à 1	200 ms	easeOut
+Brillance du bouton	Survol	Reflet dégradé traversant la surface	500 ms	easeInOut
+Bouton désactivé	Désactivation	Réduction de contraste, suppression de la lueur	200 ms	Vox
+Interrupteur	Changement d'état	Curseur glissant, fond qui change de couleur	250 ms	Vox
+Curseur de volume	Déplacement	Remplissage progressif et valeur mise à jour	200 ms	Vox
+Sélecteur de langue	Ouverture	Liste déroulante avec fondu et montée de 4 px	200 ms	Vox
+Champ de recherche	Focus	Bordure accentuée, halo très léger	200 ms	Vox
+Icône d'action	Survol	Translation de 1–2 px ou légère rotation si pertinente	200 ms	Vox
+Brillance des boutons : utiliser un pseudo-élément avec un dégradé semi-transparent qui traverse le bouton une seule fois au survol. Ne pas lancer une brillance permanente : elle attirerait trop l'attention et augmenterait le coût de rendu.
+C. Importation et nouveau doublage
+Élément	Déclencheur	Effet	Durée	Easing
+Zone de dépôt	Survol d'un fichier compatible	Bordure en pointillés plus lumineuse, légère pulsation	400 ms	Vox
+Zone de dépôt	Fichier glissé au-dessus	Échelle de 1 à 1,01 et halo violet-cyan	250 ms	Vox
+Icône vidéo	Survol de dépôt	Montée de 3 px, opacité renforcée	250 ms	Vox
+Fichier accepté	Dépôt réussi	Bordure verte, coche dessinée, message de confirmation	350 ms	Vox
+Fichier refusé	Format invalide	Bordure rouge, message explicatif et petit déplacement horizontal de 3 px	300 ms	easeOut
+Apparition de l'aperçu	Importation terminée	Fondu et montée de la miniature	400 ms	Vox
+Métadonnées du fichier	Aperçu chargé	Apparition séquentielle du nom, de la durée et du poids	300 ms	Vox
+Détection de langue	Résultat reçu	Badge qui apparaît avec fondu et montée de 4 px	300 ms	Vox
+Lancement de l'analyse	Clic valide	Bouton en état de chargement, puis transition vers le traitement	300 ms	Vox
+La pulsation de la zone de dépôt ne doit être active que lorsqu'un fichier est effectivement glissé au-dessus. Au repos, la bordure reste statique.
+D. Éditeur de traduction et timeline
+Élément	Déclencheur	Effet	Durée	Easing
+Segment sélectionné	Clic sur une ligne	Fond accentué, bordure de sélection et focus de l'éditeur	200 ms	Vox
+Changement de segment	Sélection d'un autre segment	Fondu court du contenu et mise à jour des détails	200 ms	Vox
+Curseur de lecture	Lecture vidéo	Déplacement continu synchronisé avec le temps média	Temps réel	Linéaire
+Piste du locuteur	Survol	Intensification de la couleur et de la forme d'onde	200 ms	Vox
+Segment déplacé	Glisser-déposer	Translation en direct, ombre et aperçu de position	Temps réel	Direct
+Déplacement validé	Relâchement	Aimantation sur la grille temporelle, si activée	200 ms	Vox
+Alerte « Trop long »	Dépassement de durée	Badge orange avec apparition douce	250 ms	Vox
+Correction de traduction	Texte désormais valide	Alerte retirée avec fondu	200 ms	Vox
+Lecture d'un extrait	Clic sur écouter	Icône lecture/pause et forme d'onde animée	200 ms	Vox
+Modification de texte	Saisie	Pas de transition sur le texte ; indicateur de sauvegarde discret	200 ms	Vox
+Sauvegarde réussie	Confirmation du stockage	Icône de sauvegarde qui devient une coche	250 ms	Vox
+Synchronisation : le curseur temporel doit être piloté par l'horloge du lecteur vidéo, et non par une animation indépendante de Framer Motion. Cela garantit qu'il reste aligné avec le son et l'image.
+E. Traitement IA et progression
+Élément	Déclencheur	Effet	Durée	Easing
+Anneau de progression	Traitement actif	Arc lumineux qui évolue avec le pourcentage réel	Mise à jour continue	Linéaire
+Halo de l'étape active	Étape en cours	Lueur violette-cyan à intensité discrètement variable	Cycle de 2 s	easeInOut
+Étape terminée	Confirmation du moteur IA	Coche dessinée, couleur de succès et texte actualisé	400 ms	Vox
+Passage à l'étape suivante	Étape terminée	Ancienne étape figée, nouvelle étape mise en évidence	300 ms	Vox
+Barre de progression globale	Pourcentage mis à jour	Remplissage animé jusqu'à la nouvelle valeur	300 ms	Vox
+Temps restant estimé	Nouvelle estimation	Transition numérique fluide sans faire défiler chaque chiffre	250 ms	Vox
+Erreur de traitement	Erreur reçue	Badge rouge, message et action de reprise éventuelle	300 ms	Vox
+Annulation	Clic sur « Annuler »	Bouton désactivé brièvement, puis confirmation de l'état annulé	250 ms	Vox
+Traitement terminé	Résultat confirmé	Fondu du panneau de traitement vers le résultat	400 ms	Vox
+L'anneau doit représenter la progression réellement communiquée par le backend. Il ne faut jamais afficher un pourcentage fictif pour donner une impression d'activité.
+Pour les étapes qui ne fournissent pas de pourcentage précis, utiliser un état indéterminé — un arc animé — plutôt que d'inventer une progression.
+F. Ondes audio et lecteurs de voix
+Élément	Déclencheur	Effet	Durée	Easing
+Onde audio en lecture	Audio actif	Barres dont la hauteur suit l'amplitude audio	Temps réel	Selon signal
+Onde audio inactive	Pause	Forme d'onde fixe, sans mouvement décoratif	Immédiat	Aucun
+Indicateur de lecture	Lecture	Marqueur temporel qui avance continuellement	Temps réel	Linéaire
+Voix originale	Lecture de l'échantillon	Onde en violet, progression temporelle visible	Temps réel	Linéaire
+Voix clonée	Lecture de l'échantillon traduit	Onde cyan, progression indépendante	Temps réel	Linéaire
+Bascule original/doublé	Changement de piste	Transition d'accent et mise à jour du lecteur	250 ms	Vox
+Volume audio	Ajustement	Mise à jour du niveau de volume sans animation superflue	Immédiat	Aucun
+Les animations d'onde doivent être basées sur les données du signal lorsqu'elles sont disponibles. Une onde décorative simulée peut servir de remplacement, mais elle ne doit pas être présentée comme une mesure réelle de l'amplitude.
+G. Comparateur vidéo avant/après
+Élément	Déclencheur	Effet	Durée	Easing
+Comparateur initial	Chargement	Fondu des deux images, séparateur central qui apparaît	400 ms	Vox
+Curseur central	Glisser-déposer	Déplacement direct et continu avec la souris	Temps réel	Direct
+Curseur central	Survol	Halo accentué et poignée légèrement agrandie	200 ms	Vox
+Aperçu original/doublé	Bascule de piste audio	Mise à jour de l'état actif et transition de couleur	250 ms	Vox
+Changement de langue audio	Sélection d'une langue	Mise à jour du libellé, du drapeau et de la piste	250 ms	Vox
+Plein écran	Entrée/sortie	Fondu léger des contrôles, sans délai sur la vidéo	200 ms	Vox
+Le séparateur du comparateur doit suivre le pointeur sans interpolation retardée. Une inertie visuelle pourrait rendre la comparaison imprécise.
+H. Notifications, états de chargement et erreurs
+Élément	Déclencheur	Effet	Durée	Easing
+Toast de succès	Action confirmée	Entrée depuis le haut, fondu et montée de 8 px	300 ms	Vox
+Toast d'erreur	Erreur	Entrée similaire avec accent rouge	300 ms	Vox
+Toast informatif	Message système	Fondu et translation de 6 px	250 ms	Vox
+Fermeture du toast	Délai écoulé ou fermeture manuelle	Fondu et montée de 4 px	200 ms	easeIn
+Squelette de chargement	Données en attente	Balayage de lumière discret sur fond neutre	Cycle de 1,6 s	Linéaire
+Chargement de miniature	Image en attente	Squelette remplacé par l'image avec fondu	300 ms	Vox
+Liste vide	Aucun projet	Apparition du message et de l'action principale	400 ms	Vox
+Erreur de formulaire	Validation négative	Bordure rouge, message et mise en évidence du champ	250 ms	Vox
+Les toasts doivent être empilés avec un espacement constant, au maximum trois visibles simultanément. Les messages persistants ou critiques ne doivent pas disparaître automatiquement avant que l'utilisateur puisse les lire.
+I. Résultat, téléchargement et célébration
+Élément	Déclencheur	Effet	Durée	Easing
+Titre de réussite	Export confirmé	Fondu et montée de 8 px	400 ms	Vox
+Icône de succès	Export terminé	Anneau qui apparaît puis coche dessinée	500 ms	Vox
+Particules dégradées	Première entrée dans le résultat	Quelques particules violet-cyan montent et disparaissent	600 ms	easeOut
+Récapitulatif du projet	Résultat chargé	Apparition successive des informations	300 ms chacune	Vox
+Bouton MP4	Survol	Lueur subtile et reflet traversant	500 ms	easeInOut
+Téléchargement	Clic	Icône de téléchargement et état en cours, puis confirmation	250 ms	Vox
+Téléchargement terminé	Confirmation du système	Icône transformée en coche et toast de succès	300 ms	Vox
+Créer un nouveau projet	Clic	Transition vers Nouveau doublage avec réinitialisation visuelle	400 ms	Vox
+La célébration doit se produire une seule fois à l'ouverture du résultat, pas à chaque rendu ou retour sur la page. Elle doit être discrète, sans confettis envahissants, flashs ou effets plein écran.
+J. Locuteurs, Mes projets et Paramètres
+Élément	Déclencheur	Effet	Durée	Easing
+Avatar du locuteur	Chargement de l'image	Fondu de l'image dans le masque circulaire	300 ms	Vox
+Édition du nom	Clic sur renommer	Passage du texte au champ de saisie	200 ms	Vox
+Fusion de locuteurs	Confirmation	Transition des cartes vers une seule carte résultante	350 ms	Vox
+Régénération de voix	Démarrage	État de traitement sur le lecteur concerné	300 ms	Vox
+Filtres de projets	Sélection	Indicateur actif qui se déplace et liste qui s'actualise	250 ms	Vox
+Suppression d'un projet	Confirmation	Carte qui réduit son opacité puis disparaît	250 ms	easeIn
+Changement de modèle IA	Sélection	Fermeture du menu et mise à jour de la valeur	200 ms	Vox
+Jauge de VRAM	Valeur reçue	Remplissage jusqu'à la quantité mesurée	400 ms	Vox
+Espace de stockage	Actualisation	Jauge et valeur actualisées	300 ms	Vox
+Thème sombre/clair	Bascule	Transition globale des couleurs et bordures	250 ms	Vox
+Pour les opérations destructives, notamment supprimer ou fusionner des locuteurs, la confirmation doit précéder l'animation. L'animation ne remplace jamais le dialogue de confirmation.
+
+3. Implémentation React avec Framer Motion
+A. Installation et configuration Tailwind
+npm install framer-motion lucide-react
+
+
+Pour Tailwind CSS, conserver les couleurs du design system VoxLingo et la courbe d'animation commune dans le fichier CSS global.
+@import "tailwindcss";
+
+:root {
+  --vox-bg: #0B0D12;
+  --vox-surface: #141821;
+  --vox-border: #232836;
+  --vox-purple: #7C5CFF;
+  --vox-cyan: #22D3EE;
+  --vox-success: #22C55E;
+  --vox-warning: #F59E0B;
+  --vox-error: #EF4444;
+
+  --vox-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --vox-duration-fast: 200ms;
+  --vox-duration-base: 300ms;
+  --vox-duration-page: 400ms;
+  --vox-duration-emphasis: 500ms;
+}
+
+html {
+  background: var(--vox-bg);
+}
+
+body {
+  margin: 0;
+  font-family: Inter, sans-serif;
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+  }
+}
+
+
+Le CSS seul ne suffit pas à neutraliser toutes les animations JavaScript : il faut également gérer prefers-reduced-motion dans Framer Motion.
+B. Variantes partagées
+Créer un fichier src/motion/variants.ts :
+import type { Variants } from "framer-motion";
+
+export const VOX_EASE = [0.22, 1, 0.36, 1] as const;
+
+export const pageVariants: Variants = {
+  hidden: {
+    opacity: 0,
+    y: 8,
+  },
+  visible: {
+    opacity: 1,
+    y: 0,
+    transition: {
+      duration: 0.4,
+      ease: VOX_EASE,
+    },
+  },
+  exit: {
+    opacity: 0,
+    y: -4,
+    transition: {
+      duration: 0.2,
+      ease: "easeIn",
+    },
+  },
+};
+
+export const cardVariants: Variants = {
+  hidden: {
+    opacity: 0,
+    y: 8,
+  },
+  visible: {
+    opacity: 1,
+    y: 0,
+    transition: {
+      duration: 0.3,
+      ease: VOX_EASE,
+    },
+  },
+};
+
+export const menuVariants: Variants = {
+  hidden: {
+    opacity: 0,
+    scale: 0.96,
+    y: 4,
+  },
+  visible: {
+    opacity: 1,
+    scale: 1,
+    y: 0,
+    transition: {
+      duration: 0.2,
+      ease: VOX_EASE,
+    },
+  },
+  exit: {
+    opacity: 0,
+    scale: 0.98,
+    y: 2,
+    transition: {
+      duration: 0.15,
+      ease: "easeIn",
+    },
+  },
+};
+
+
+C. Apparition des pages et cartes
+import { motion } from "framer-motion";
+import {
+  pageVariants,
+  cardVariants,
+} from "./motion/variants";
+
+export function ProjectGrid({ projects }) {
+  return (
+    <motion.main
+      variants={pageVariants}
+      initial="hidden"
+      animate="visible"
+      exit="exit"
+      className="min-h-screen bg-[#0B0D12] p-8"
+    >
+      <h1 className="mb-6 text-2xl font-semibold text-white">
+        Mes projets
+      </h1>
+
+      <motion.div
+        className="grid grid-cols-3 gap-4"
+        initial="hidden"
+        animate="visible"
+        variants={{
+          hidden: {},
+          visible: {
+            transition: {
+              staggerChildren: 0.04,
+            },
+          },
+        }}
+      >
+        {projects.map((project) => (
+          <motion.article
+            key={project.id}
+            variants={cardVariants}
+            whileHover={{
+              y: -3,
+              boxShadow: "0 12px 32px rgba(0,0,0,0.24)",
+              borderColor: "#45405F",
+              transition: {
+                duration: 0.25,
+                ease: [0.22, 1, 0.36, 1],
+              },
+            }}
+            className="rounded-2xl border border-[#232836]
+              bg-[#141821] p-4"
+          >
+            <h2 className="font-medium text-white">
+              {project.name}
+            </h2>
+          </motion.article>
+        ))}
+      </motion.div>
+    </motion.main>
+  );
+}
+
+
+En production, envelopper le contenu conditionnel dans AnimatePresence avec des clés de page stables afin que les transitions de sortie soient jouées lors de la navigation.
+D. Bouton principal avec brillance
+import { motion } from "framer-motion";
+
+export function PrimaryButton({
+  children,
+  onClick,
+  disabled = false,
+}) {
+  return (
+    <motion.button
+      disabled={disabled}
+      onClick={onClick}
+      whileHover={
+        disabled
+          ? undefined
+          : { y: -1 }
+      }
+      whileTap={
+        disabled
+          ? undefined
+          : { scale: 0.98 }
+      }
+      className="group relative isolate overflow-hidden
+        rounded-xl bg-gradient-to-r from-[#7C5CFF]
+        to-[#22D3EE] px-5 py-3 font-medium
+        text-white shadow-lg shadow-violet-500/10
+        focus-visible:outline-2
+        focus-visible:outline-offset-4
+        focus-visible:outline-cyan-400
+        disabled:cursor-not-allowed
+        disabled:opacity-50"
+    >
+      <span
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-y-0
+          -left-1/2 w-1/3 -skew-x-12
+          bg-gradient-to-r from-transparent
+          via-white/25 to-transparent
+          opacity-0 transition-all duration-500
+          ease-out group-hover:left-full
+          group-hover:opacity-100"
+      />
+
+      <span className="relative z-10">
+        {children}
+      </span>
+    </motion.button>
+  );
+}
+
+
+La brillance est déclenchée au survol, tandis que Framer Motion gère l'élévation et le clic. Éviter d'ajouter simultanément plusieurs animations de transform sur le même élément.
+E. Zone de dépôt
+import { motion } from "framer-motion";
+import { useState } from "react";
+import { FileVideo } from "lucide-react";
+
+export function VideoDropZone({ onFile }) {
+  const [dragging, setDragging] = useState(false);
+
+  return (
+    <motion.div
+      animate={
+        dragging
+          ? {
+              scale: [1, 1.01, 1],
+              borderColor: "#22D3EE",
+              boxShadow: "0 0 24px rgba(124,92,255,0.18)",
+            }
+          : {
+              scale: 1,
+              borderColor: "#353B4B",
+              boxShadow: "0 0 0 rgba(0,0,0,0)",
+            }
+      }
+      transition={
+        dragging
+          ? {
+              duration: 0.4,
+              repeat: Infinity,
+              ease: [0.22, 1, 0.36, 1],
+            }
+          : { duration: 0.2 }
+      }
+      onDragEnter={(event) => {
+        event.preventDefault();
+        setDragging(true);
+      }}
+      onDragOver={(event) => event.preventDefault()}
+      onDragLeave={() => setDragging(false)}
+      onDrop={(event) => {
+        event.preventDefault();
+        setDragging(false);
+
+        const file = event.dataTransfer.files[0];
+        if (file) onFile(file);
+      }}
+      className="flex min-h-64 cursor-pointer
+        flex-col items-center justify-center
+        rounded-2xl border-2 border-dashed
+        bg-[#141821] p-8"
+    >
+      <FileVideo
+        className="mb-4 h-10 w-10 text-violet-400"
+        aria-hidden="true"
+      />
+
+      <p className="font-medium text-white">
+        Déposez votre vidéo ici
+      </p>
+
+      <p className="mt-2 text-sm text-gray-400">
+        MP4, MOV ou WebM
+      </p>
+    </motion.div>
+  );
+}
+
+
+Important : ce composant illustre l'animation et l'événement de dépôt. L'implémentation finale doit aussi prévoir un champ fichier accessible au clavier, valider le format et la taille, et ne jamais considérer le nom ou l'extension comme une validation suffisante du contenu vidéo.
+F. Anneau de progression et coche dessinée
+import { motion } from "framer-motion";
+import { Check } from "lucide-react";
+
+export function ProcessingStep({
+  label,
+  status,
+  progress = 0,
+}) {
+  const done = status === "done";
+  const active = status === "active";
+
+  return (
+    <div className="flex items-center gap-3 py-3">
+      <div className="relative flex h-8 w-8 items-center justify-center">
+        {active && (
+          <motion.div
+            className="absolute inset-0 rounded-full
+              border-2 border-violet-400
+              border-t-cyan-400"
+            animate={{ rotate: 360 }}
+            transition={{
+              duration: 1.4,
+              repeat: Infinity,
+              ease: "linear",
+            }}
+          />
+        )}
+
+        {done && (
+          <svg viewBox="0 0 24 24" className="h-6 w-6">
+            <motion.path
+              d="M5 12.5 10 17 19 7"
+              fill="none"
+              stroke="#22C55E"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              initial={{ pathLength: 0 }}
+              animate={{ pathLength: 1 }}
+              transition={{
+                duration: 0.4,
+                ease: [0.22, 1, 0.36, 1],
+              }}
+            />
+          </svg>
+        )}
+
+        {!active && !done && (
+          <div className="h-2 w-2 rounded-full bg-gray-600" />
+        )}
+      </div>
+
+      <span
+        className={
+          active
+            ? "text-white"
+            : done
+              ? "text-gray-300"
+              : "text-gray-500"
+        }
+      >
+        {label}
+      </span>
+
+      {active && (
+        <span className="ml-auto text-sm text-cyan-300">
+          {Math.round(progress)} %
+        </span>
+      )}
+    </div>
+  );
+}
+
+
+L'état done doit être activé après la confirmation du moteur de traitement. Si une étape ne fournit pas de pourcentage réel, supprimer la valeur numérique et afficher uniquement l'anneau indéterminé.
+G. Respect de prefers-reduced-motion
+Créer un composant commun pour éviter de répéter la logique d'accessibilité.
+import {
+  MotionConfig,
+  useReducedMotion,
+} from "framer-motion";
+
+export function VoxMotionProvider({ children }) {
+  return (
+    <MotionConfig reducedMotion="user">
+      {children}
+    </MotionConfig>
+  );
+}
+
+export function useVoxMotion() {
+  const reduced = useReducedMotion();
+
+  return {
+    reduced: Boolean(reduced),
+    transition: reduced
+      ? { duration: 0 }
+      : {
+          duration: 0.3,
+          ease: [0.22, 1, 0.36, 1],
+        },
+    pageInitial: reduced
+      ? { opacity: 1 }
+      : { opacity: 0, y: 8 },
+  };
+}
+
+
+À appliquer dans l'application :
+- Supprimer les déplacements, zooms, pulsations et particules non essentiels en mode réduit.
+- Conserver les changements d'état indispensables : progression, erreurs, succès et sélection.
+- Garder une progression fonctionnelle, mais sans rotation infinie décorative.
+- Ne pas bloquer la lecture vidéo, le déplacement du curseur ou les interactions de l'utilisateur.
+- Respecter également la préférence de réduction des animations pour les animations CSS.
+
+4. Architecture recommandée pour toute l'application
+src/
+├── motion/
+│   ├── variants.ts
+│   ├── transitions.ts
+│   └── useVoxMotion.ts
+├── components/
+│   ├── PrimaryButton.tsx
+│   ├── ProjectCard.tsx
+│   ├── VideoDropZone.tsx
+│   ├── AudioWaveform.tsx
+│   ├── ProcessingStep.tsx
+│   ├── ToastProvider.tsx
+│   └── PageTransition.tsx
+├── pages/
+│   ├── Home.tsx
+│   ├── NewDubbing.tsx
+│   ├── TranslationEditor.tsx
+│   ├── Processing.tsx
+│   ├── Speakers.tsx
+│   ├── Result.tsx
+│   ├── Projects.tsx
+│   └── Settings.tsx
+└── styles/
+    └── globals.css
+
+
+Règles d'ingénierie
+1. Une seule source de vérité par état. La progression IA vient du backend ; la lecture audio vient du lecteur ; le comparateur vient de sa position contrôlée.
+2. Pas d'animations concurrentes sur un même élément. Combiner les transformations dans un seul composant Motion.
+3. Nettoyer les animations continues. Annuler les requestAnimationFrame, écouteurs et abonnements quand le composant est démonté.
+4. Respecter les performances desktop. Limiter les filtres de flou, les ombres très diffuses et les grandes quantités de particules.
+5. Gérer les transitions interrompues. Un changement rapide de page, une annulation ou une erreur ne doit pas laisser un composant dans un état visuel incohérent.
+6. Ne pas confondre animation et état métier. Une animation terminée ne signifie pas que le fichier est sauvegardé, exporté ou téléchargé.
+7. Tester les interactions au clavier. Les mêmes états de focus et de sélection doivent être accessibles sans souris.
+5. Critères d'acceptation avant livraison
+Checklist QA Motion
+0/12
+
+
+
+[ ] Les huit écrans utilisent la même courbe et les mêmes tokens de durée.
+[ ] Les pages apparaissent sans saut de mise en page.
+[ ] Les boutons principaux ont un survol et un état pressé cohérents.
+[ ] La zone de dépôt distingue clairement fichier accepté, fichier refusé et survol.
+[ ] Les ondes audio suivent la lecture réelle ou sont explicitement présentées comme décoratives.
+[ ] Les étapes du traitement reflètent les états réels du moteur IA.
+[ ] Les squelettes disparaissent dès que les données sont disponibles.
+[ ] Les toasts ne masquent pas les commandes importantes.
+[ ] Le comparateur suit le pointeur sans retard.
+[ ] La célébration de fin ne se répète pas à chaque rendu.
+[ ] prefers-reduced-motion désactive les animations non essentielles.
+[ ] Les animations restent fluides pendant la lecture vidéo et le traitement.
+
+Décision finale : VoxLingo doit privilégier les animations fonctionnelles, courtes et prévisibles. Les seuls mouvements continus autorisés par défaut sont ceux qui représentent une activité réelle — lecture audio, curseur temporel ou traitement en cours — ainsi que de très légers accents visuels, désactivables lorsque l'utilisateur préfère réduire les animations.
