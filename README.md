@@ -87,7 +87,51 @@ Après « Valider et générer les voix », VoxLingo :
 
 L'écran **Résultat** propose le comparateur avant/après, le téléchargement de la vidéo (MP4), des sous-titres (SRT) et de l'audio seul (MP3), et un retour à l'éditeur pour corriger puis régénérer.
 
-> Jusqu'à la phase 5, la vidéo doublée ne contient que la voix traduite (sans la musique ni l'ambiance d'origine).
+> Avec « Conserver le fond sonore », la musique et l'ambiance d'origine (séparées par Demucs) sont remixées sous la voix doublée.
+
+## Locuteurs et voix
+
+Après la transcription, VoxLingo **identifie qui parle** dans chaque phrase (empreinte vocale SpeechBrain ECAPA,
+regroupement automatique : le nombre de personnes est trouvé seul, sans compte en ligne) et mesure la hauteur de
+chaque voix. La page **Locuteurs** permet de renommer, fusionner, corriger le locuteur d'une phrase et choisir la voix :
+
+- **voix d'origine clonée** (par défaut) ;
+- **voix de la bibliothèque** : 20 voix (4 enfants, 4 jeunes, 8 adultes, 4 seniors, femmes et hommes) ;
+  « Attribuer automatiquement » donne à chaque personne une voix différente, du même sexe et du registre le plus proche ;
+- **vos propres voix** : un enregistrement de 6 à 15 s ajouté dans la Bibliothèque (Paramètres → Bibliothèque de voix).
+
+> Les voix d'enfants, de jeunes et de seniors sont obtenues en transformant des voix d'adultes XTTS (hauteur,
+> résonances, tempo, léger tremblement). Pour un rendu parfaitement naturel, ajoutez un vrai enregistrement.
+
+Après un changement de voix, cliquez sur **Générer les voix** : seules les phrases concernées sont refaites.
+Une seule génération de voix tourne à la fois (8 Go de RAM ne suffisent pas pour deux) : les suivantes attendent leur tour.
+
+## Ton des phrases
+
+Chaque phrase d'origine est analysée (énergie, hauteur, variation, débit) et reçoit un ton : énergique, intense,
+calme, doux ou neutre, par rapport à la façon habituelle de parler de la même personne. Le ton règle
+l'expressivité de la voix doublée, et son volume suit celui de la phrase d'origine (une phrase criée reste forte).
+C'est une analyse acoustique, pas une reconnaissance d'émotions : le ton se corrige d'un clic dans l'éditeur.
+
+## Synchronisation labiale (Kaggle)
+
+Sans carte NVIDIA, la synchronisation des lèvres (LatentSync 1.5) se fait sur le GPU gratuit de Kaggle :
+
+1. écran **Résultat** → *Télécharger le paquet Kaggle* (vidéo, voix doublée, carnet `kaggle/lipsync_kaggle.ipynb`, guide) ;
+2. sur kaggle.com : importer le carnet et le paquet, choisir un GPU, *Run All* ;
+3. écran Résultat → *Importer la vidéo synchronisée* : elle devient la vidéo téléchargée.
+
+## Tests
+
+```powershell
+cd backend
+python -m pytest
+```
+
+## Développement
+
+`start.ps1` lance le serveur **sans rechargement automatique** : un redémarrage interromprait les traitements en
+cours. Pour développer : `python -m uvicorn main:app --reload` dans `backend/`.
 
 ## Modes de fonctionnement
 
@@ -117,8 +161,8 @@ models/    Modèles téléchargés (ignoré par Git)
 - [x] Phase 2 — Téléversement, tâches et transcription
 - [x] Phase 3 — Traduction contextuelle locale
 - [x] Phase 4 — Voix clonée et assemblage
-- [ ] Phase 5 — Conservation du fond sonore
-- [ ] Phase 6 — Plusieurs locuteurs
-- [ ] Phase 7 — Émotion et intonation
-- [ ] Phase 8 — Synchronisation labiale
-- [ ] Phase 9 — Finitions
+- [x] Phase 5 — Conservation du fond sonore
+- [x] Phase 6 — Plusieurs locuteurs
+- [x] Phase 7 — Émotion et intonation
+- [x] Phase 8 — Synchronisation labiale
+- [x] Phase 9 — Finitions

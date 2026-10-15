@@ -19,7 +19,7 @@ export type Health = {
 }
 
 export type JobState = 'en_attente' | 'en_cours' | 'a_valider' | 'termine' | 'erreur' | 'annule'
-export type StepState = 'attente' | 'en_cours' | 'termine' | 'erreur' | 'a_venir' | 'ignore'
+export type StepState = 'attente' | 'en_cours' | 'termine' | 'erreur' | 'a_venir' | 'ignore' | 'kaggle'
 
 export type Step = {
   cle: string
@@ -45,6 +45,8 @@ export type JobOptions = {
   ajuster_trop_longs: boolean
   /** Phrase trop longue : la reformuler (voix naturelle) ou accélérer la voix. */
   strategie_duree?: StrategieDuree
+  /** Attribuer automatiquement une voix de la bibliothèque à chaque locuteur. */
+  voix_bibliotheque?: boolean
 }
 
 export type Job = {
@@ -68,12 +70,16 @@ export type Job = {
   fichier_sortie: string | null
   segments_trop_longs?: number
   voix_generees?: number
+  nb_locuteurs?: number
+  synchro_importee?: boolean
   debut_traitement: string | null
   fin_traitement: string | null
   cree_le: string
   maj_le: string
   etapes: Step[]
 }
+
+export type Ton = 'energique' | 'calme' | 'intense' | 'doux' | 'neutre'
 
 export type Segment = {
   id: number
@@ -87,6 +93,10 @@ export type Segment = {
   ajustement?: 'raccourcie' | 'decoupee' | 'a_revoir'
   duree_doublage?: number
   facteur_voix?: number
+  locuteur?: string
+  /** Ton de la phrase d'origine (phase 7), corrigeable */
+  ton?: Ton
+  ton_corrige?: boolean
 }
 
 export type Transcription = {
@@ -96,6 +106,7 @@ export type Transcription = {
   segments: Segment[]
   langue_cible?: string
   moteur_traduction?: string
+  locuteurs?: Record<string, { nom: string; couleur: string; voix?: string }>
 }
 
 async function request<T>(path: string): Promise<T> {
@@ -223,3 +234,86 @@ export function createJob(
     xhr.send(form)
   })
 }
+
+// ───────────────────────── Locuteurs et bibliothèque de voix (phase 6) ─────────────────────────
+
+export type Sexe = 'femme' | 'homme'
+export type AgeVoix = 'enfant' | 'jeune' | 'adulte' | 'senior'
+
+export type Locuteur = {
+  code: string
+  nom: string
+  couleur: string
+  /** « clone » (voix d'origine clonée) ou identifiant d'une voix de la bibliothèque */
+  voix: string
+  /** Voix utilisée lors de la dernière génération (absent si jamais générée) */
+  voix_generee?: string
+  f0_hz: number | null
+  sexe_estime: Sexe | null
+  registre: string | null
+  nb_phrases: number
+  duree_s: number
+  part: number
+}
+
+export type Voix = {
+  id: string
+  nom: string
+  source: 'xtts' | 'perso'
+  sexe: Sexe
+  age: AgeVoix
+  registre: string | null
+  f0_hz: number | null
+  apercu: boolean
+}
+
+export const getSpeakers = (id: string) => request<Locuteur[]>(`/jobs/${id}/locuteurs`)
+export const updateSpeaker = (id: string, code: string, modif: { nom?: string; voix?: string }) =>
+  send<Locuteur[]>(`/jobs/${id}/locuteurs/${code}`, 'PUT', modif)
+export const mergeSpeakers = (id: string, source: string, cible: string) =>
+  send<Locuteur[]>(`/jobs/${id}/locuteurs/fusion`, 'POST', { source, cible })
+export const setSegmentSpeaker = (id: string, segId: number, locuteur: string) =>
+  send<Transcription>(`/jobs/${id}/segments/${segId}/locuteur`, 'PUT', { locuteur })
+export const setSegmentTone = (id: string, segId: number, ton: Ton) =>
+  send<Transcription>(`/jobs/${id}/segments/${segId}/ton`, 'PUT', { ton })
+export const detectSpeakers = (id: string) => send<Job>(`/jobs/${id}/locuteurs/detecter`, 'POST')
+export const autoAssignVoices = (id: string) => send<Locuteur[]>(`/jobs/${id}/locuteurs/attribuer`, 'POST')
+export const speakerAudioUrl = (id: string, code: string, quoi: 'original' | 'doublee') => `${API_URL}/jobs/${id}/locuteurs/${code}/${quoi}`
+export const speakerAvatarUrl = (id: string, code: string) => `${API_URL}/jobs/${id}/locuteurs/${code}/avatar`
+
+export const listVoices = () => request<{ voix: Voix[]; apercus: { en_cours: boolean; erreur: string | null } }>('/voix')
+export const generatePreviews = () => send<{ en_cours: boolean }>('/voix/apercus', 'POST')
+export const voicePreviewUrl = (voixId: string) => `${API_URL}/voix/${voixId}/apercu`
+export const updateVoice = (voixId: string, modif: { nom?: string; sexe?: Sexe; age?: AgeVoix }) =>
+  send<Voix>(`/voix/${voixId}`, 'PUT', modif)
+export const deleteVoice = (voixId: string) => send<{ supprime: string }>(`/voix/${voixId}`, 'DELETE')
+export async function addVoice(fichier: File, nom: string, sexe: Sexe, age: AgeVoix): Promise<Voix> {
+  const form = new FormData()
+  form.append('echantillon', fichier)
+  form.append('nom', nom)
+  form.append('sexe', sexe)
+  form.append('age', age)
+  const res = await fetch(`${API_URL}/voix`, { method: 'POST', body: form })
+  if (!res.ok) throw new Error((await res.json().catch(() => null))?.detail ?? `Erreur serveur (${res.status})`)
+  return res.json()
+}
+
+/** Régénère les voix du projet : seules les phrases dont le texte ou la voix a changé sont refaites. */
+export async function regenerateVoices(id: string): Promise<Job> {
+  const data = await getSegments(id)
+  return validateTranslations(id, data.segments.map((s) => ({ id: s.id, traduction: s.traduction ?? '' })))
+}
+
+// ───────────────────────── Synchronisation labiale (phase 8) ─────────────────────────
+
+export const kaggleUrl = (id: string) => `${API_URL}/jobs/${id}/kaggle`
+export async function importLipsync(id: string, video: File): Promise<Job> {
+  const form = new FormData()
+  form.append('video', video)
+  const res = await fetch(`${API_URL}/jobs/${id}/synchro`, { method: 'POST', body: form })
+  if (!res.ok) throw new Error((await res.json().catch(() => null))?.detail ?? `Erreur serveur (${res.status})`)
+  return res.json()
+}
+export const removeLipsync = (id: string) => send<Job>(`/jobs/${id}/synchro`, 'DELETE')
+
+export const LIBELLES_AGE: Record<AgeVoix, string> = { enfant: 'Enfant', jeune: 'Jeune', adulte: 'Adulte', senior: 'Senior' }

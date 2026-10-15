@@ -129,6 +129,8 @@ def ajuster_segments(
                             morceau["traduction"] = texte
                             morceau["traduction_ia"] = texte
                             morceau["ajustement"] = "decoupee"
+                            if seg.get("locuteur"):
+                                morceau["locuteur"] = seg["locuteur"]
                         resultat.extend(morceaux)
                         bilan["decoupees"] += 1
                     else:

@@ -9,6 +9,7 @@ import {
   Clock3,
   Database,
   Info,
+  Library,
   Music,
   PenLine,
   Play,
@@ -350,6 +351,7 @@ export function NewDubbing() {
     volume_fond: 100,
     ajuster_trop_longs: true,
     strategie_duree: 'reformuler',
+    voix_bibliotheque: false,
   })
   // Valeurs par défaut choisies dans la page Paramètres (appliquées une seule fois)
   const { data: parametres } = useQuery({ queryKey: ['parametres'], queryFn: getSettings, retry: 0 })
@@ -467,6 +469,13 @@ export function NewDubbing() {
               aide="Activé : une phrase trop longue est reformulée plus brièvement par l'IA, dans le même sens, pour garder une voix au débit naturel (l'accélération ne sert qu'en dernier recours). Désactivé : la voix est d'abord accélérée, et l'IA ne reformule qu'au-delà."
               checked={options.strategie_duree === 'reformuler'}
               onChange={(v) => setOption('strategie_duree', v ? 'reformuler' : 'accelerer')}
+            />
+            <OptionCard
+              icon={<Library className="size-6" />}
+              label="Voix de la bibliothèque"
+              aide="Activé : chaque personne de la vidéo reçoit automatiquement une voix différente de la bibliothèque (même sexe, registre le plus proche). Désactivé : la voix d'origine de chaque personne est clonée. Modifiable ensuite dans la page Locuteurs."
+              checked={!!options.voix_bibliotheque}
+              onChange={(v) => setOption('voix_bibliotheque', v)}
             />
           </div>
         </motion.div>

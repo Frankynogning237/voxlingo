@@ -137,6 +137,8 @@ function sousTitre(step: Step, job: Job) {
       return 'Prochaine phase'
     case 'ignore':
       return 'Désactivée pour ce projet'
+    case 'kaggle':
+      return 'À faire sur Kaggle (écran Résultat)'
     default:
       return enCours(job) ? 'En attente…' : 'Non lancée'
   }

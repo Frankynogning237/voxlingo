@@ -8,7 +8,8 @@ import type { Segment } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { formatTimecode } from '@/lib/useVideoClock'
 
-const COULEURS_LOCUTEURS = ['#a855f7', '#3b82f6', '#f97316', '#22c55e', '#ec4899']
+export type PisteLocuteur = { code: string; nom: string; couleur: string }
+const PISTE_UNIQUE: PisteLocuteur[] = [{ code: 'SPEAKER_00', nom: 'Toutes les voix', couleur: '#a855f7' }]
 const PAS_REGLE = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600]
 const LARGEUR_LIBELLES = 200
 const IMAGES_BANDE = 24 // images dans filmstrip.jpg (backend/pipeline/extract.py)
@@ -70,6 +71,7 @@ export function EditorTimeline({
   temps,
   lecture,
   segments,
+  locuteurs,
   traductions,
   selection,
   peaks,
@@ -82,6 +84,7 @@ export function EditorTimeline({
   temps: number
   lecture: boolean
   segments: Segment[]
+  locuteurs: PisteLocuteur[]
   traductions: Record<number, string>
   selection: number | null
   peaks?: number[]
@@ -90,6 +93,7 @@ export function EditorTimeline({
   onToggle: () => void
   onSelect: (id: number) => void
 }) {
+  const pistes = locuteurs.length ? locuteurs : PISTE_UNIQUE
   const [zoom, setZoom] = useState(0) // 0 = toute la vidéo visible, 100 = zoom maximal
   const piste = useRef<HTMLDivElement>(null)
   const defilement = useRef<HTMLDivElement>(null)
@@ -172,11 +176,13 @@ export function EditorTimeline({
         {/* Libellés des pistes */}
         <div className="shrink-0 border-r border-white/5" style={{ width: LARGEUR_LIBELLES }}>
           <div className="h-[86px]" />
-          <div className="flex h-11 items-center gap-3 px-4 text-[15px] text-white">
-            <span className="size-5 rounded-full" style={{ background: COULEURS_LOCUTEURS[0] }} />
-            <span title="La séparation des différentes personnes qui parlent arrive à la phase 6.">Toutes les voix</span>
-            <ChevronRight className="ml-auto size-4 text-white/60" />
-          </div>
+          {pistes.map((loc) => (
+            <div key={loc.code} className="flex h-11 items-center gap-3 px-4 text-[15px] text-white">
+              <span className="size-5 shrink-0 rounded-full" style={{ background: loc.couleur }} />
+              <span className="truncate">{loc.nom}</span>
+              <ChevronRight className="ml-auto size-4 shrink-0 text-white/60" />
+            </div>
+          ))}
           <div className="h-14" />
         </div>
 
@@ -204,9 +210,10 @@ export function EditorTimeline({
             </div>
             {/* Bande d'images */}
             <Filmstrip src={filmstrip} largeur={largeurPiste} />
-            {/* Piste du locuteur */}
-            <div className="relative h-11 border-b border-white/5">
-              {segments.map((seg) => (
+            {/* Une piste par locuteur */}
+            {pistes.map((loc) => (
+            <div key={loc.code} className="relative h-11 border-b border-white/5">
+              {segments.filter((seg) => pistes.length === 1 || (seg.locuteur ?? 'SPEAKER_00') === loc.code).map((seg) => (
                 <button
                   key={seg.id}
                   type="button"
@@ -224,13 +231,14 @@ export function EditorTimeline({
                   style={{
                     left: x(seg.debut) + 1,
                     width: Math.max(6, x(seg.fin) - x(seg.debut) - 3),
-                    background: COULEURS_LOCUTEURS[0],
+                    background: loc.couleur,
                   }}
                 >
                   {traductions[seg.id] ?? seg.traduction}
                 </button>
               ))}
             </div>
+            ))}
             {/* Forme d'onde réelle */}
             <WaveTrack peaks={peaks} />
             {/* Curseur de lecture */}

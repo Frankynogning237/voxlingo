@@ -20,7 +20,7 @@ from config import get_settings
 logger = logging.getLogger("voxlingo.jobs")
 
 JobState = Literal["en_attente", "en_cours", "a_valider", "termine", "erreur", "annule"]
-StepState = Literal["attente", "en_cours", "termine", "erreur", "a_venir", "ignore"]
+StepState = Literal["attente", "en_cours", "termine", "erreur", "a_venir", "ignore", "kaggle"]
 
 # Étapes affichées dans l'interface, dans l'ordre du pipeline.
 # `disponible` passe à True au fil des phases de développement.
@@ -28,10 +28,10 @@ STEPS: list[dict[str, Any]] = [
     {"cle": "extraction", "libelle": "Extraction audio", "disponible": True},
     {"cle": "separation", "libelle": "Séparation voix / fond", "disponible": True},
     {"cle": "transcription", "libelle": "Transcription", "disponible": True},
-    {"cle": "locuteurs", "libelle": "Identification des locuteurs", "disponible": False},
+    {"cle": "locuteurs", "libelle": "Identification des locuteurs", "disponible": True},
     {"cle": "traduction", "libelle": "Traduction", "disponible": True},
     {"cle": "voix", "libelle": "Génération des voix", "disponible": True},
-    {"cle": "synchro_labiale", "libelle": "Synchronisation labiale", "disponible": False},
+    {"cle": "synchro_labiale", "libelle": "Synchronisation labiale", "disponible": True},
     {"cle": "export", "libelle": "Export", "disponible": True},
 ]
 
@@ -159,6 +159,24 @@ def strategie(status: dict[str, Any]) -> str:
     return choix if choix in STRATEGIES else STRATEGIE_PAR_DEFAUT
 
 
+LOCUTEUR_PAR_DEFAUT = "SPEAKER_00"
+
+
+def locuteur(seg: dict[str, Any]) -> str:
+    """Locuteur d'un segment (projets antérieurs à l'identification : un seul locuteur)."""
+    return seg.get("locuteur") or LOCUTEUR_PAR_DEFAUT
+
+
+def locuteurs(data: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Fiche des locuteurs d'un projet : {code: {nom, couleur, voix, f0_hz}}."""
+    fiche = data.get("locuteurs") or {}
+    for seg in data.get("segments", []):
+        fiche.setdefault(locuteur(seg), {"nom": f"Locuteur {len(fiche) + 1}", "couleur": "#a855f7"})
+    for infos in fiche.values():
+        infos.setdefault("voix", "clone")
+    return fiche
+
+
 def list_jobs() -> list[dict[str, Any]]:
     """Historique des tâches, de la plus récente à la plus ancienne."""
     jobs = []
@@ -221,6 +239,13 @@ def start_voices(job_id: str) -> None:
     from pipeline.runner import run_voices
 
     threading.Thread(target=run_voices, args=(job_id,), name=f"voix-{job_id}", daemon=True).start()
+
+
+def start_speakers(job_id: str) -> None:
+    """Lance l'identification des locuteurs dans un thread en arrière-plan."""
+    from pipeline.runner import run_speakers
+
+    threading.Thread(target=run_speakers, args=(job_id,), name=f"locuteurs-{job_id}", daemon=True).start()
 
 
 class JobCancelled(RuntimeError):

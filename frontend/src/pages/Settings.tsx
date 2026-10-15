@@ -2,7 +2,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
+  ArrowRight,
   Box,
+  Library,
   Check,
   CircleCheck,
   Cpu,
@@ -21,6 +23,7 @@ import { Flag } from '@/components/Flag'
 import { Gradient, PageHeader } from '@/components/Layout'
 import { OutlineButton, PrimaryButton } from '@/components/PrimaryButton'
 import { getSettings, openProjectsFolder, saveSettings, type Parametres, type ValeursParametres } from '@/lib/api'
+import { href } from '@/lib/router'
 import { cn } from '@/lib/utils'
 import { cardVariants, staggerVariants, voxTransition } from '@/motion/variants'
 
@@ -203,6 +206,15 @@ export function Settings() {
             options={[{ valeur: 'xtts_v2', libelle: 'XTTS v2 (voix clonée)' }]}
             onChange={() => {}}
           />
+          <a
+            href={href({ page: 'voix' })}
+            className="mt-3 flex items-center justify-between rounded-xl border border-white/10 bg-white/[0.02] px-4 py-3 text-[14px] text-white transition-colors hover:border-violet-400/50"
+          >
+            <span className="flex items-center gap-2">
+              <Library className="size-4 text-violet-300" /> Bibliothèque de voix : 20 voix (femmes, hommes) + vos voix
+            </span>
+            <ArrowRight className="size-4" />
+          </a>
         </Carte>
 
         <Carte icone={<Database className="size-7" strokeWidth={1.5} />} titre="Stockage">

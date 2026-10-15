@@ -24,7 +24,8 @@ logger = logging.getLogger("voxlingo.runner")
 WEIGHTS: dict[str, int] = {
     "extraction": 3,
     "separation": 10,
-    "transcription": 12,
+    "transcription": 9,
+    "locuteurs": 3,
     "traduction": 20,
     "voix": 45,
     "export": 10,
@@ -183,6 +184,9 @@ def run_pipeline(job_id: str) -> None:
         jobs.write_segments(job_id, result.to_dict())
         jobs.update_status(job_id, langue_source=result.langue, probabilite_langue=result.probabilite)
 
+    def do_speakers(report: Callable[[float], None]) -> None:
+        _identifier_locuteurs(job_id, report)
+
     def body() -> None:
         _run_step(job_id, "extraction", do_extract)
         if (status.get("options") or {}).get("conserver_fond", True):
@@ -190,9 +194,60 @@ def run_pipeline(job_id: str) -> None:
         else:
             jobs.update_step(job_id, "separation", etat="ignore")
         _run_step(job_id, "transcription", do_transcribe)
+        _run_step(job_id, "locuteurs", do_speakers)
         _run_step(job_id, "traduction", lambda report: _do_translate(job_id, report))
 
     _guarded(job_id, body)
+
+
+def _mesurer_locuteurs(job_id: str, data: dict) -> None:
+    """Mesure la hauteur de voix (f0) de chaque locuteur sur ses phrases les plus longues."""
+    import numpy as np
+
+    from pipeline.voice_bank import mesurer_f0
+
+    audio = jobs.project_dir(job_id) / "audio.wav"
+    for code, infos in jobs.locuteurs(data).items():
+        phrases = sorted((s for s in data["segments"] if jobs.locuteur(s) == code),
+                         key=lambda s: s["fin"] - s["debut"], reverse=True)[:3]
+        mesures = [f for s in phrases if (f := mesurer_f0(audio, s["debut"], s["fin"] - s["debut"])) is not None]
+        infos["f0_hz"] = round(float(np.median(mesures)), 1) if mesures else None
+        data["locuteurs"][code] = infos
+
+
+def _analyser_tons(job_id: str, data: dict, report: Callable[[float], None] | None = None) -> None:
+    """Ton de chaque phrase (énergique, calme…) et écart de volume à la moyenne de son locuteur."""
+    from pipeline.prosody import analyser, marquer_ecarts
+
+    analyser(data["segments"], jobs.project_dir(job_id) / "audio.wav", on_progress=report)
+    marquer_ecarts(data["segments"])
+
+
+def _identifier_locuteurs(job_id: str, report: Callable[[float], None]) -> None:
+    """Identifie qui parle dans chaque phrase, mesure chaque voix et, si l'option est active,
+    attribue automatiquement une voix de la bibliothèque à chaque locuteur."""
+    from pipeline import voice_bank
+    from pipeline.diarize import identifier_locuteurs
+
+    status = jobs.read_status(job_id)
+    data = jobs.read_segments(job_id)
+    data["locuteurs"] = identifier_locuteurs(
+        data["segments"], jobs.project_dir(job_id) / "audio.wav", on_progress=_sous_progression(report, 0, 0.85)
+    )
+    _mesurer_locuteurs(job_id, data)
+    _analyser_tons(job_id, data, _sous_progression(report, 0.85, 1.0))
+    if (status.get("options") or {}).get("voix_bibliotheque", False):
+        for code, voix_id in voice_bank.attribuer(data["locuteurs"]).items():
+            data["locuteurs"][code]["voix"] = voix_id
+    jobs.write_segments(job_id, data)
+    jobs.update_status(job_id, nb_locuteurs=len(data["locuteurs"]))
+
+
+def run_speakers(job_id: str) -> None:
+    """Identifie les locuteurs d'un projet déjà transcrit (projets créés avant la phase 6)."""
+    etat_final = "termine" if (jobs.read_status(job_id) or {}).get("fichier_sortie") else "a_valider"
+    _guarded(job_id, lambda: _run_step(job_id, "locuteurs", lambda report: _identifier_locuteurs(job_id, report)),
+             etat_final=etat_final)
 
 
 def run_adjustment(job_id: str, ids: set[int] | None = None) -> None:
@@ -211,25 +266,61 @@ def run_translation(job_id: str) -> None:
 
 # ───────────────────────── Phase 4 : voix et export ─────────────────────────
 
-def _do_voices(job_id: str, report: Callable[[float], None]) -> None:
-    """Clone la voix d'origine et génère chaque phrase traduite (seules les phrases modifiées sont refaites)."""
-    from pipeline.voice import extraire_reference, generer_voix
+REFERENCE_MIN_LOCUTEUR_S = 3.0  # en dessous, la voix d'un locuteur est trop peu entendue pour la cloner
+
+
+def voix_des_locuteurs(job_id: str, data: dict) -> dict[str, str]:
+    """Voix de chaque locuteur : sa voix d'origine clonée, ou celle choisie dans la bibliothèque."""
+    from pipeline import voice_bank
+    from pipeline.voice import extraire_reference
 
     status = jobs.read_status(job_id)
     folder = jobs.project_dir(job_id)
     dossier = folder / "voix"
     dossier.mkdir(exist_ok=True)
+    voix_isolee = folder / "voix_isolee.wav"
+    source = voix_isolee if voix_isolee.is_file() else folder / status["fichier"]
+
+    resultat: dict[str, str] = {}
+    for code, infos in jobs.locuteurs(data).items():
+        choix = voice_bank.trouver(infos["voix"]) if infos["voix"] != "clone" else None
+        if choix is not None:
+            resultat[code] = voice_bank.spec(choix)
+            continue
+        phrases = [s for s in data["segments"] if jobs.locuteur(s) == code]
+        reference = dossier / f"reference_{code}.wav"
+        if sum(s["fin"] - s["debut"] for s in phrases) < REFERENCE_MIN_LOCUTEUR_S:
+            phrases, reference = data["segments"], dossier / "reference.wav"  # trop peu de parole : voix commune
+        if not reference.is_file():
+            extraire_reference(source, phrases, reference)
+        resultat[code] = f"ref:{reference}"
+    return resultat
+
+
+def _do_voices(job_id: str, report: Callable[[float], None]) -> None:
+    """Génère chaque phrase traduite avec la voix de son locuteur (seules les phrases modifiées sont refaites)."""
+    from pipeline.voice import generer_voix
+
+    status = jobs.read_status(job_id)
     data = jobs.read_segments(job_id)
-    reference = dossier / "reference.wav"
-    if not reference.is_file():
-        voix_isolee = folder / "voix_isolee.wav"
-        extraire_reference(voix_isolee if voix_isolee.is_file() else folder / status["fichier"],
-                           data["segments"], reference)
+    if any("ton" not in s for s in data["segments"]):
+        _analyser_tons(job_id, data)
+        jobs.write_segments(job_id, data)
+    par_locuteur = voix_des_locuteurs(job_id, data)
     report(0.02)
     generees = generer_voix(
-        data["segments"], status["langue_cible"], reference, dossier,
+        data["segments"], status["langue_cible"],
+        {s["id"]: par_locuteur[jobs.locuteur(s)] for s in data["segments"]},
+        jobs.project_dir(job_id) / "voix",
         on_progress=_sous_progression(report, 0.02, 1.0),
     )
+    # Voix réellement utilisée pour chaque locuteur : l'interface signale un changement non généré
+    data = jobs.read_segments(job_id)
+    fiche = jobs.locuteurs(data)
+    for infos in fiche.values():
+        infos["voix_generee"] = infos["voix"]
+    data["locuteurs"] = fiche
+    jobs.write_segments(job_id, data)
     jobs.update_status(job_id, voix_generees=generees)
 
 
@@ -237,6 +328,7 @@ def _do_export(job_id: str, report: Callable[[float], None]) -> None:
     """Cale chaque voix sur son temps, construit la piste doublée et exporte vidéo et sous-titres."""
     from pipeline.align import caler
     from pipeline.assemble import construire_piste, ecrire_srt, exporter_video, mixer_fond
+    from pipeline.prosody import gain_volume
     from pipeline.voice import fichier_brut
 
     status = jobs.read_status(job_id)
@@ -249,7 +341,7 @@ def _do_export(job_id: str, report: Callable[[float], None]) -> None:
     placements = []
     for n, seg in enumerate(data["segments"]):
         cale = dossier / f"cale_{seg['id']:05d}.wav"
-        resultat = caler(fichier_brut(dossier, seg["id"]), cale, seg)
+        resultat = caler(fichier_brut(dossier, seg["id"]), cale, seg, gain_volume(seg))
         seg["facteur_voix"] = resultat["facteur"]
         seg["duree_doublage"] = resultat["duree"]
         seg["trop_long"] = resultat["trop_long"]  # mesure réelle, remplace l'estimation
@@ -290,5 +382,9 @@ def run_voices(job_id: str) -> None:
     def body() -> None:
         _run_step(job_id, "voix", lambda report: _do_voices(job_id, report))
         _run_step(job_id, "export", lambda report: _do_export(job_id, report))
+        # Sans carte NVIDIA ≥ 8 Go, la synchronisation labiale se fait sur Kaggle (kaggle/lipsync_kaggle.ipynb)
+        options = (jobs.read_status(job_id) or {}).get("options") or {}
+        jobs.update_step(job_id, "synchro_labiale", etat="kaggle" if options.get("synchro_labiale") else "ignore")
+        jobs.update_status(job_id, synchro_importee=False)  # la piste a changé : l'ancienne synchro n'est plus valable
 
     _guarded(job_id, body, etat_final="termine")

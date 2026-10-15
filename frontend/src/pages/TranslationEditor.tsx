@@ -16,11 +16,12 @@ import {
   Sparkles,
   TriangleAlert,
   Undo2,
+  UsersRound,
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { Panel, Switch } from '@/components/Controls'
-import { EditorTimeline } from '@/components/EditorTimeline'
+import { EditorTimeline, type PisteLocuteur } from '@/components/EditorTimeline'
 import { BottomPanel, SystemStatus, UserFooter } from '@/components/Layout'
 import { PrimaryButton } from '@/components/PrimaryButton'
 import {
@@ -35,6 +36,9 @@ import {
   type BilanAjustement,
   type StrategieDuree,
   setStrategy,
+  setSegmentSpeaker,
+  setSegmentTone,
+  type Ton,
   videoUrl,
   type Job,
   type Segment,
@@ -46,7 +50,6 @@ import { formatHorodatage, useVideoClock } from '@/lib/useVideoClock'
 import { cardVariants, staggerVariants, voxTransition } from '@/motion/variants'
 
 const ETAPES = ['Analyse', 'Traduction & Édition', 'Clonage vocal', 'Génération', 'Export']
-const COULEUR_LOCUTEUR = '#a855f7'
 
 /** Fil d'étapes du doublage (en-tête de la maquette). */
 function Stepper({ actuelle }: { actuelle: number }) {
@@ -139,6 +142,63 @@ function tropLong(seg: Segment, traduction: string, strategie: StrategieDuree, c
   return dureeVoix / disponible > CAPACITE[strategie]
 }
 
+// Ton de la phrase d'origine : couleurs des badges de la maquette
+const TONS: Record<Ton, { libelle: string; classe: string; aide: string }> = {
+  energique: { libelle: 'Énergique', classe: 'border-violet-400/70 bg-violet-500/15 text-violet-200', aide: 'Phrase animée : voix doublée plus expressive.' },
+  intense: { libelle: 'Intense', classe: 'border-orange-400/70 bg-orange-500/15 text-orange-200', aide: 'Phrase dite fort : voix doublée plus forte.' },
+  calme: { libelle: 'Calme', classe: 'border-sky-400/70 bg-sky-500/15 text-sky-200', aide: 'Phrase posée : voix doublée plus calme.' },
+  doux: { libelle: 'Doux', classe: 'border-teal-400/70 bg-teal-500/15 text-teal-200', aide: 'Phrase dite doucement : voix doublée plus douce.' },
+  neutre: { libelle: 'Neutre', classe: 'border-white/25 bg-white/5 text-white/80', aide: 'Ton habituel du locuteur.' },
+}
+
+/** Badge du ton de la phrase (mesuré sur l'original) ; un clic permet de le corriger. */
+function BadgeTon({ ton, corrige, onChange }: { ton: Ton; corrige: boolean; onChange: (t: Ton) => void }) {
+  const [ouvert, setOuvert] = useState(false)
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation()
+          setOuvert(!ouvert)
+        }}
+        title={TONS[ton].aide + (corrige ? ' (corrigé à la main)' : ' Cliquez pour corriger.')}
+        className={cn('rounded-full border px-3 py-1 text-[13px] whitespace-nowrap', TONS[ton].classe)}
+      >
+        {TONS[ton].libelle}
+      </button>
+      <AnimatePresence>
+        {ouvert && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.96, y: 4 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0 }}
+            transition={voxTransition(0.2)}
+            onMouseLeave={() => setOuvert(false)}
+            className="absolute top-8 right-0 z-30 w-44 rounded-xl border border-white/12 bg-popover p-1.5 shadow-2xl"
+          >
+            {(Object.keys(TONS) as Ton[]).map((t) => (
+              <button
+                key={t}
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setOuvert(false)
+                  if (t !== ton) onChange(t)
+                }}
+                className="flex w-full items-center justify-between rounded-lg px-3 py-1.5 text-left text-[14px] text-white hover:bg-white/5"
+              >
+                {TONS[t].libelle}
+                {t === ton && <Check className="size-4" />}
+              </button>
+            ))}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  )
+}
+
 const LIBELLES_AJUSTEMENT = {
   raccourcie: { texte: 'Reformulée', aide: "Traduction reformulée plus brièvement par l'IA, dans le même sens, pour tenir dans le temps." },
   decoupee: { texte: 'Découpée', aide: 'Phrase redécoupée aux pauses naturelles, chaque morceau calé sur son moment.' },
@@ -178,6 +238,64 @@ function BilanBandeau({ bilan, onClose }: { bilan: BilanAjustement; onClose: () 
   )
 }
 
+/** Pastille de couleur du locuteur ; un clic permet de corriger qui parle dans la phrase. */
+function ChoixLocuteurLigne({
+  seg,
+  locuteurs,
+  onSpeaker,
+}: {
+  seg: Segment
+  locuteurs: PisteLocuteur[]
+  onSpeaker: (code: string) => void
+}) {
+  const [ouvert, setOuvert] = useState(false)
+  const actuel = locuteurs.find((l) => l.code === (seg.locuteur ?? 'SPEAKER_00')) ?? locuteurs[0]
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation()
+          if (locuteurs.length > 1) setOuvert(!ouvert)
+        }}
+        title={actuel ? actuel.nom + (locuteurs.length > 1 ? ' : cliquez pour changer de locuteur' : '') : undefined}
+        aria-label="Locuteur de la phrase"
+        className="block size-4 rounded-full ring-offset-2 ring-offset-[#0e1119] transition-shadow hover:ring-2 hover:ring-white/50"
+        style={{ background: actuel?.couleur ?? '#a855f7' }}
+      />
+      <AnimatePresence>
+        {ouvert && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.96, y: 4 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0 }}
+            transition={voxTransition(0.2)}
+            onMouseLeave={() => setOuvert(false)}
+            className="absolute top-6 left-0 z-30 w-52 rounded-xl border border-white/12 bg-popover p-1.5 shadow-2xl"
+          >
+            <p className="px-3 py-1 text-[12px] text-white/60">Qui parle dans cette phrase ?</p>
+            {locuteurs.map((l) => (
+              <button
+                key={l.code}
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setOuvert(false)
+                  if (l.code !== actuel?.code) onSpeaker(l.code)
+                }}
+                className="flex w-full items-center gap-2 rounded-lg px-3 py-1.5 text-left text-[14px] text-white hover:bg-white/5"
+              >
+                <span className="size-3 rounded-full" style={{ background: l.couleur }} /> {l.nom}
+                {l.code === actuel?.code && <Check className="ml-auto size-4" />}
+              </button>
+            ))}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  )
+}
+
 function SegmentRow({
   seg,
   langues,
@@ -190,6 +308,9 @@ function SegmentRow({
   onPlay,
   onRevert,
   onAdjust,
+  onTone,
+  locuteurs,
+  onSpeaker,
 }: {
   seg: Segment
   langues: { source?: string | null; cible?: string | null; strategie: StrategieDuree }
@@ -202,6 +323,9 @@ function SegmentRow({
   onPlay: () => void
   onRevert: () => void
   onAdjust: () => void
+  locuteurs: PisteLocuteur[]
+  onSpeaker: (code: string) => void
+  onTone: (ton: Ton) => void
 }) {
   const [menu, setMenu] = useState(false)
   const alerte = tropLong(seg, traduction, langues.strategie, langues.cible)
@@ -215,7 +339,7 @@ function SegmentRow({
         selectionne ? 'bg-violet-500/[0.08]' : 'hover:bg-white/[0.02]',
       )}
     >
-      <span className="size-4 rounded-full" style={{ background: COULEUR_LOCUTEUR }} />
+      <ChoixLocuteurLigne seg={seg} locuteurs={locuteurs} onSpeaker={onSpeaker} />
       <span className="text-[15px] text-white/90 tabular-nums">{formatHorodatage(seg.debut)}</span>
       <p className="pr-2 text-[15px] leading-snug text-white">{seg.texte}</p>
       <ArrowRight className="size-4 text-white/60" />
@@ -247,6 +371,9 @@ function SegmentRow({
             >
               <Scissors className="size-3.5" /> {ajustement.texte}
             </motion.span>
+          )}
+          {!alerte && !ajustement && !modifie && seg.ton && (
+            <BadgeTon ton={seg.ton} corrige={!!seg.ton_corrige} onChange={onTone} />
           )}
           {!alerte && !ajustement && modifie && (
             <motion.span initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-[12px] text-white/50">
@@ -333,6 +460,11 @@ export function TranslationEditor({ job }: { job: Job }) {
   const [message, setMessage] = useState<{ type: 'succes' | 'erreur'; texte: string } | null>(null)
 
   const segments = useMemo(() => data?.segments ?? [], [data])
+  // Locuteurs détectés (phase 6) : une couleur et une piste par personne
+  const pistes: PisteLocuteur[] = useMemo(
+    () => Object.entries(data?.locuteurs ?? {}).map(([code, l]) => ({ code, nom: l.nom, couleur: l.couleur })),
+    [data],
+  )
   const [bilanVu, setBilanVu] = useState<string | null>(null)
   const cleBilan = job.dernier_ajustement ? `${job.fin_traitement}` : null
   const traductions = useMemo(
@@ -410,6 +542,16 @@ export function TranslationEditor({ job }: { job: Job }) {
       queryClient.setQueryData(['job', job.id], j)
       void queryClient.invalidateQueries({ queryKey: ['segments', job.id] })
     },
+    onError: (e) => notifier('erreur', (e as Error).message),
+  })
+  const changerTon = useMutation({
+    mutationFn: ({ segId, ton }: { segId: number; ton: Ton }) => setSegmentTone(job.id, segId, ton),
+    onSuccess: (d) => queryClient.setQueryData(['segments', job.id], d),
+    onError: (e) => notifier('erreur', (e as Error).message),
+  })
+  const changerLocuteur = useMutation({
+    mutationFn: ({ segId, code }: { segId: number; code: string }) => setSegmentSpeaker(job.id, segId, code),
+    onSuccess: (d) => queryClient.setQueryData(['segments', job.id], d),
     onError: (e) => notifier('erreur', (e as Error).message),
   })
   const occupe = changerStrategie.isPending || ajuster.isPending || enregistrer.isPending || valider.isPending || reinitialiser.isPending || retraduire.isPending
@@ -513,6 +655,12 @@ export function TranslationEditor({ job }: { job: Job }) {
         >
           <RotateCcw className="size-5" /> Réinitialiser
         </button>
+        <a
+          href={href({ page: 'locuteurs', id: job.id })}
+          className="flex h-11 items-center gap-2.5 rounded-xl border border-white/15 px-5 text-[15px] text-white transition-colors duration-200 hover:border-white/30"
+        >
+          <UsersRound className="size-5" /> Locuteurs
+        </a>
       </div>
 
       <AnimatePresence>
@@ -556,6 +704,9 @@ export function TranslationEditor({ job }: { job: Job }) {
                 }}
                 onRevert={() => setBrouillon((b) => ({ ...b, [seg.id]: seg.traduction_ia ?? seg.traduction ?? '' }))}
                 onAdjust={() => ajuster.mutate([seg.id])}
+                locuteurs={pistes}
+                onSpeaker={(code) => changerLocuteur.mutate({ segId: seg.id, code })}
+                onTone={(ton) => changerTon.mutate({ segId: seg.id, ton })}
               />
             ))}
           </motion.div>
@@ -568,6 +719,7 @@ export function TranslationEditor({ job }: { job: Job }) {
           temps={clock.temps}
           lecture={clock.lecture}
           segments={segments}
+          locuteurs={pistes}
           traductions={traductions}
           selection={actif}
           peaks={peaks}
@@ -585,7 +737,9 @@ export function TranslationEditor({ job }: { job: Job }) {
             {job.traduction_validee ? 'Traduction validée' : 'Traduction prête'}
             <span className="text-white/50">•</span> {segments.length} segment{segments.length > 1 ? 's' : ''} détecté{segments.length > 1 ? 's' : ''}
             <span className="text-white/50">•</span>
-            <span title="La séparation des différentes personnes qui parlent arrive à la phase 6.">locuteurs non séparés</span>
+            <a href={href({ page: 'locuteurs', id: job.id })} className="hover:text-white hover:underline">
+              {Math.max(1, pistes.length)} locuteur{pistes.length > 1 ? 's' : ''}
+            </a>
             {nbTropLongs > 0 && (
               <>
                 <span className="text-white/50">•</span>

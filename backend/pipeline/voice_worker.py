@@ -4,8 +4,9 @@ XTTS demande 3 à 4 Go de mémoire. L'exécuter dans son propre processus protè
 serveur : en cas de manque de mémoire, seul ce processus s'arrête, l'interface
 reste disponible et affiche un message clair.
 
-Entrée : un fichier JSON {"segments": [{"id", "traduction", "vitesse", "disponible"}],
-"langue", "reference", "dossier"}.
+Entrée : un fichier JSON {"segments": [{"id", "traduction", "vitesse", "disponible", "voix"}],
+"langue", "dossier"}, où « voix » vaut « ref:<chemin WAV> » (voix clonée à partir d'un
+échantillon) ou « xtts:<nom> » (voix intégrée à XTTS v2).
 Sortie standard, une ligne par événement :
   PRET                      modèle chargé
   FAIT <id> <vitesse>       voix du segment écrite dans <dossier>/brut_<id>.wav
@@ -39,24 +40,38 @@ def main(chemin_tache: str) -> None:
 
     tts = TTS(get_settings().xtts_model, progress_bar=False).to(runtime.device)
     modele = tts.synthesizer.tts_model
-    latent, empreinte = modele.get_conditioning_latents(audio_path=[tache["reference"]])
     print("PRET", flush=True)
+    conditionnements: dict[str, tuple] = {}
 
-    def lire(texte: str, vitesse: float) -> np.ndarray:
+    def conditionnement(voix: str) -> tuple:
+        """Empreinte de la voix, calculée une seule fois par voix."""
+        base = voix.split("|")[0]  # la transformation d'âge est appliquée après synthèse
+        if voix not in conditionnements:
+            genre, _, valeur = base.partition(":")
+            if genre == "xtts":
+                donnees = modele.speaker_manager.speakers[valeur]
+                conditionnements[voix] = (donnees["gpt_cond_latent"], donnees["speaker_embedding"])
+            else:
+                conditionnements[voix] = modele.get_conditioning_latents(audio_path=[valeur])
+        return conditionnements[voix]
+
+    def lire(texte: str, voix: str, vitesse: float, temperature: float = 0.7) -> np.ndarray:
+        latent, empreinte = conditionnement(voix)
         sortie = modele.inference(
             texte, tache["langue"], latent, empreinte,
-            temperature=0.7, speed=vitesse, enable_text_splitting=True,
+            temperature=temperature, speed=vitesse, enable_text_splitting=True,
         )
         return _rogner_silences(np.asarray(sortie["wav"], dtype=np.float32))
 
     for seg in tache["segments"]:
         vitesse = seg["vitesse"]
-        wav = lire(seg["traduction"], vitesse)
+        temperature = seg.get("temperature", 0.7)  # expressivité selon le ton de la phrase d'origine
+        wav = lire(seg["traduction"], seg["voix"], vitesse, temperature)
         depassement = len(wav) / TAUX / seg["disponible"]
         if depassement > ACCELERATION_MAX and vitesse < VITESSE_XTTS_MAX:
             # Encore trop long : nouvel essai plus rapide, avec une petite marge
             vitesse = round(min(VITESSE_XTTS_MAX, vitesse * depassement / (ACCELERATION_MAX * 0.95)), 2)
-            wav = lire(seg["traduction"], vitesse)
+            wav = lire(seg["traduction"], seg["voix"], vitesse, temperature)
         sf.write(fichier_brut(dossier, seg["id"]), wav, TAUX, subtype="PCM_16")
         print(f"FAIT {seg['id']} {vitesse}", flush=True)
 

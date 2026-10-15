@@ -22,12 +22,13 @@ if (-not (Test-Path (Join-Path $root 'frontend\node_modules'))) {
     Push-Location (Join-Path $root 'frontend'); npm install; Pop-Location
 }
 
-# Le backend tourne dans sa propre fenêtre (réduite) : au rechargement automatique,
-# uvicorn envoie Ctrl+C à toute sa console, ce qui arrêterait aussi le frontend.
+# Le backend tourne dans sa propre fenêtre (réduite). Pas de rechargement automatique :
+# il interromprait les traitements en cours (voix, traduction) à chaque modification du code.
+# Pour développer avec rechargement : python -m uvicorn main:app --reload (dans backend/).
 # Ses journaux sont aussi écrits dans data/logs/voxlingo.log.
 Write-Host 'Démarrage du backend  : http://localhost:8000 (fenêtre « VoxLingo API » réduite)' -ForegroundColor Cyan
 $backend = Start-Process -FilePath $python -WindowStyle Minimized `
-    -ArgumentList '-m', 'uvicorn', 'main:app', '--host', '127.0.0.1', '--port', '8000', '--reload', '--reload-exclude', 'tests/*' `
+    -ArgumentList '-m', 'uvicorn', 'main:app', '--host', '127.0.0.1', '--port', '8000' `
     -WorkingDirectory (Join-Path $root 'backend') -PassThru
 
 Write-Host 'Démarrage du frontend : http://localhost:5173' -ForegroundColor Cyan

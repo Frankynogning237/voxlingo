@@ -15,6 +15,7 @@ import logging
 import os
 import subprocess
 import sys
+import threading
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -24,6 +25,8 @@ import numpy as np
 from config import get_runtime, get_settings
 from pipeline.extract import _require
 from pipeline.segments import vitesse_xtts
+from pipeline.prosody import TEMPERATURE
+from pipeline.voice_bank import separer_spec, transformer
 
 logger = logging.getLogger("voxlingo.voice")
 
@@ -105,18 +108,22 @@ class Manifeste:
             json.loads(self.chemin.read_text(encoding="utf-8")) if self.chemin.is_file() else {}
         )
 
+    CHAMPS = ("texte", "langue", "disponible", "voix", "ton")
+
     @staticmethod
-    def _cle(seg: dict[str, Any], langue: str) -> dict[str, Any]:
-        # Le temps disponible fixe la vitesse de lecture : s'il change, la voix est refaite
+    def _cle(seg: dict[str, Any], langue: str, voix: str) -> dict[str, Any]:
+        # Le temps disponible fixe la vitesse de lecture ; la voix choisie, le timbre :
+        # si l'un des deux change, la phrase est refaite
         disponible = round(seg.get("fin_max", seg["fin"]) - seg["debut"], 2)
-        return {"texte": seg["traduction"], "langue": langue, "disponible": disponible}
+        return {"texte": seg["traduction"], "langue": langue, "disponible": disponible, "voix": voix,
+                "ton": seg.get("ton")}
 
-    def a_jour(self, seg: dict[str, Any], langue: str, fichier: Path) -> bool:
+    def a_jour(self, seg: dict[str, Any], langue: str, voix: str, fichier: Path) -> bool:
         entree = self.donnees.get(str(seg["id"]), {})
-        return fichier.is_file() and {k: entree.get(k) for k in ("texte", "langue", "disponible")} == self._cle(seg, langue)
+        return fichier.is_file() and {k: entree.get(k) for k in self.CHAMPS} == self._cle(seg, langue, voix)
 
-    def noter(self, seg: dict[str, Any], langue: str, vitesse: float | None = None) -> None:
-        self.donnees[str(seg["id"])] = {**self._cle(seg, langue), "vitesse": vitesse}
+    def noter(self, seg: dict[str, Any], langue: str, voix: str, vitesse: float | None = None) -> None:
+        self.donnees[str(seg["id"])] = {**self._cle(seg, langue, voix), "vitesse": vitesse}
         self.chemin.write_text(json.dumps(self.donnees, ensure_ascii=False, indent=1), encoding="utf-8")
 
 
@@ -125,6 +132,10 @@ def fichier_brut(dossier: Path, seg_id: int) -> Path:
 
 
 MEMOIRE_CONSEILLEE_GO = 3.0  # XTTS v2 sur processeur
+
+# Une seule génération XTTS à la fois : deux processus de 3 à 4 Go saturent la mémoire.
+# Les suivantes attendent leur tour (projets, aperçus de la bibliothèque).
+_file_xtts = threading.Lock()
 
 
 def _memoire_libre_go() -> float:
@@ -139,18 +150,22 @@ def _memoire_libre_go() -> float:
 def generer_voix(
     segments: list[dict[str, Any]],
     langue: str,
-    reference: Path,
+    voix: dict[int, str],
     dossier: Path,
     on_progress: Callable[[float], None] | None = None,
 ) -> int:
-    """Synthétise chaque segment traduit avec la voix clonée. Renvoie le nombre de phrases générées.
+    """Synthétise chaque segment traduit avec sa voix. Renvoie le nombre de phrases générées.
+
+    `voix` associe à chaque identifiant de segment une voix : « ref:<chemin WAV> » (voix
+    d'origine clonée, ou voix personnelle de la bibliothèque) ou « xtts:<nom> » (voix
+    intégrée à XTTS v2, voir pipeline/voice_bank.py).
 
     La synthèse tourne dans un processus séparé (pipeline/voice_worker.py) : un manque de
     mémoire n'arrête que ce processus, et devient un message d'erreur lisible.
     """
     dossier.mkdir(parents=True, exist_ok=True)
     manifeste = Manifeste(dossier)
-    a_generer = [s for s in segments if not manifeste.a_jour(s, langue, fichier_brut(dossier, s["id"]))]
+    a_generer = [s for s in segments if not manifeste.a_jour(s, langue, voix[s["id"]], fichier_brut(dossier, s["id"]))]
     logger.info("Voix : %d phrase(s) à générer, %d déjà à jour", len(a_generer), len(segments) - len(a_generer))
     if not a_generer:
         return 0
@@ -168,15 +183,31 @@ def generer_voix(
                 "traduction": s["traduction"],
                 "vitesse": vitesse_xtts(s, s["traduction"], langue),
                 "disponible": max(s.get("fin_max", s["fin"]) - s["debut"], 0.1),
+                "voix": voix[s["id"]],
+                "temperature": TEMPERATURE.get(s.get("ton") or "neutre", 0.7),
             }
             for s in a_generer
         ],
         "langue": langue,
-        "reference": str(reference),
         "dossier": str(dossier),
     }, ensure_ascii=False), encoding="utf-8")
     par_id = {s["id"]: s for s in a_generer}
 
+    if not _file_xtts.acquire(blocking=False):
+        logger.info("Une autre génération de voix est en cours : en attente de son tour")
+        while not _file_xtts.acquire(timeout=2):
+            if on_progress:
+                on_progress(0.0)  # point de contrôle : permet d'annuler pendant l'attente
+    try:
+        return _lancer_xtts(tache, a_generer, par_id, manifeste, langue, voix, dossier, libre, on_progress)
+    finally:
+        _file_xtts.release()
+
+
+def _lancer_xtts(tache: Path, a_generer: list[dict[str, Any]], par_id: dict[int, dict[str, Any]],
+                 manifeste: "Manifeste", langue: str, voix: dict[int, str], dossier: Path, libre: float,
+                 on_progress: Callable[[float], None] | None) -> int:
+    """Lance le processus XTTS et suit sa progression (appelé quand c'est le tour de cette génération)."""
     logger.info("Chargement de XTTS v2 dans un processus séparé (%s)", get_runtime().device)
     processus = subprocess.Popen(
         [sys.executable, "-X", "utf8", "-m", "pipeline.voice_worker", str(tache)],
@@ -195,7 +226,9 @@ def generer_voix(
             elif ligne.startswith("FAIT "):
                 _, ident, vitesse = ligne.split()
                 seg = par_id[int(ident)]
-                manifeste.noter(seg, langue, float(vitesse))
+                _, transformation = separer_spec(voix[seg["id"]])
+                transformer(fichier_brut(dossier, seg["id"]), transformation)  # voix d'enfant, de senior…
+                manifeste.noter(seg, langue, voix[seg["id"]], float(vitesse))
                 faits += 1
                 logger.info("Voix %d/%d (vitesse ×%s) : %s", faits, len(a_generer), vitesse, seg["traduction"][:60])
                 if on_progress:

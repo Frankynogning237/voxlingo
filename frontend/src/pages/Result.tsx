@@ -1,4 +1,5 @@
 // Résultat — maquette reference/Doublage vidéo réussi en français.png
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   ArrowLeftRight,
@@ -8,6 +9,8 @@ import {
   CirclePlus,
   Clock3,
   Download,
+  ExternalLink,
+  Upload,
   Captions,
   FileAudio,
   Globe,
@@ -26,11 +29,11 @@ import {
 } from 'lucide-react'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 
-import { Panel } from '@/components/Controls'
+import { LipsIcon, Panel } from '@/components/Controls'
 import { LangueTag } from '@/components/Flag'
 import { Gradient, PageHeader } from '@/components/Layout'
 import { OutlineButton, PrimaryButton } from '@/components/PrimaryButton'
-import { downloadUrl, dubbedUrl, subtitlesVttUrl, videoUrl, type Job } from '@/lib/api'
+import { downloadUrl, dubbedUrl, importLipsync, kaggleUrl, removeLipsync, subtitlesVttUrl, videoUrl, type Job } from '@/lib/api'
 import { formatDuree } from '@/lib/format'
 import { href, navigate } from '@/lib/router'
 import { cn } from '@/lib/utils'
@@ -276,6 +279,89 @@ function Comparateur({ job, piste, setPiste }: { job: Job; piste: Piste; setPist
   )
 }
 
+/** Synchronisation labiale sur le GPU gratuit de Kaggle : paquet à télécharger, vidéo à réimporter. */
+function SynchroLabiale({ job }: { job: Job }) {
+  const queryClient = useQueryClient()
+  const fichier = useRef<HTMLInputElement>(null)
+  const importer = useMutation({
+    mutationFn: (f: File) => importLipsync(job.id, f),
+    onSuccess: (j) => queryClient.setQueryData(['job', job.id], j),
+  })
+  const retirer = useMutation({ mutationFn: () => removeLipsync(job.id), onSuccess: (j) => queryClient.setQueryData(['job', job.id], j) })
+  const etapes = [
+    { n: 1, texte: 'Téléchargez le paquet (vidéo, voix doublée, carnet prêt à l\'emploi et guide).' },
+    { n: 2, texte: 'Sur kaggle.com, importez le carnet et le paquet, choisissez un GPU, puis « Run All ».' },
+    { n: 3, texte: 'Importez ici la vidéo « video_synchronisee.mp4 » obtenue.' },
+  ]
+  return (
+    <Panel className="mt-6 px-6 py-5">
+      <div className="flex flex-wrap items-start gap-6">
+        <div className="min-w-72 flex-1">
+          <p className="flex items-center gap-3 text-[20px] font-semibold text-white">
+            <LipsIcon className="size-6" /> Synchronisation labiale
+            {job.synchro_importee && (
+              <span className="rounded-full bg-success px-3 py-0.5 text-[13px] font-medium text-black">Appliquée</span>
+            )}
+          </p>
+          <p className="mt-1 text-[14px] text-white/75">
+            Fait correspondre les lèvres à la nouvelle voix. Sans carte NVIDIA, le calcul se fait gratuitement sur Kaggle
+            (environ 30 h de GPU par semaine).
+          </p>
+          <ol className="mt-4 flex flex-col gap-2">
+            {etapes.map((e) => (
+              <li key={e.n} className="flex items-start gap-3 text-[14px] text-white/90">
+                <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-violet-500/30 text-[13px] text-white">{e.n}</span>
+                {e.texte}
+              </li>
+            ))}
+          </ol>
+        </div>
+        <div className="flex w-80 flex-col gap-3">
+          <a
+            href={kaggleUrl(job.id)}
+            className="flex h-12 items-center justify-center gap-2.5 rounded-2xl border border-white/20 text-[15px] text-white transition-colors hover:border-white/40"
+          >
+            <Download className="size-5" /> 1. Télécharger le paquet Kaggle
+          </a>
+          <a
+            href="https://www.kaggle.com/code"
+            target="_blank"
+            rel="noreferrer"
+            className="flex h-12 items-center justify-center gap-2.5 rounded-2xl border border-white/20 text-[15px] text-white transition-colors hover:border-white/40"
+          >
+            <ExternalLink className="size-5" /> 2. Ouvrir Kaggle
+          </a>
+          <button
+            type="button"
+            onClick={() => fichier.current?.click()}
+            disabled={importer.isPending}
+            className="flex h-12 items-center justify-center gap-2.5 rounded-2xl bg-brand-gradient text-[15px] text-white disabled:opacity-60"
+          >
+            <Upload className="size-5" /> {importer.isPending ? 'Import…' : '3. Importer la vidéo synchronisée'}
+          </button>
+          <input
+            ref={fichier}
+            type="file"
+            accept="video/mp4"
+            className="hidden"
+            onChange={(e) => {
+              const f = e.target.files?.[0]
+              if (f) importer.mutate(f)
+              e.target.value = ''
+            }}
+          />
+          {job.synchro_importee && (
+            <button type="button" onClick={() => retirer.mutate()} className="text-[13px] text-white/60 hover:text-white">
+              Revenir à la vidéo sans synchronisation
+            </button>
+          )}
+          {importer.error && <p className="text-[13px] text-destructive">{(importer.error as Error).message}</p>}
+        </div>
+      </div>
+    </Panel>
+  )
+}
+
 function Ligne({ icone, libelle, valeur }: { icone: ReactNode; libelle: string; valeur: ReactNode }) {
   return (
     <div className="flex items-center gap-4 py-3">
@@ -365,7 +451,7 @@ export function Result({ job }: { job: Job }) {
           <Ligne
             icone={<Users className="size-6" />}
             libelle="Nombre de locuteurs"
-            valeur={<span title="La séparation des personnes qui parlent arrive à la phase 6.">non séparés</span>}
+            valeur={<a href={href({ page: 'locuteurs', id: job.id })} className="hover:underline">{job.nb_locuteurs ?? 1}</a>}
           />
           <Ligne icone={<Clock3 className="size-6" />} libelle="Durée de la vidéo" valeur={formatDuree(job.duree_s)} />
           <Ligne icone={<Zap className="size-6" />} libelle="Temps de traitement" valeur={tempsTraitement(job)} />
@@ -400,6 +486,8 @@ export function Result({ job }: { job: Job }) {
           </div>
         </Panel>
       </div>
+
+      <SynchroLabiale job={job} />
 
       <motion.div
         initial={{ opacity: 0, y: 8 }}

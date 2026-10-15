@@ -109,6 +109,7 @@ async def create_job(
     volume_fond: int = Form(100, ge=0, le=100),
     ajuster_trop_longs: bool = Form(True),
     strategie_duree: Literal["reformuler", "accelerer"] = Form("reformuler"),
+    voix_bibliotheque: bool = Form(False),
 ) -> dict:
     """Reçoit une vidéo et la langue cible, enregistre le projet et lance le pipeline."""
     nom = Path(video.filename or "video").name
@@ -151,6 +152,7 @@ async def create_job(
         "volume_fond": volume_fond,
         "ajuster_trop_longs": ajuster_trop_longs,
         "strategie_duree": strategie_duree,
+        "voix_bibliotheque": voix_bibliotheque,
     }
     status = jobs.create_job(job_id, nom, destination.name, langue_cible, options)
     jobs.start_job(job_id)
@@ -313,16 +315,82 @@ def _nom_telechargement(status: dict, extension: str) -> str:
 def download_video(job_id: str) -> FileResponse:
     """Vidéo doublée (MP4)."""
     status = _get_status_or_404(job_id)
-    path = _fichier_projet(job_id, "doublage.mp4", "La vidéo doublée n'est pas encore prête.")
-    return FileResponse(path, media_type="video/mp4", filename=_nom_telechargement(status, "mp4"))
+    return FileResponse(_video_finale(job_id, status), media_type="video/mp4", filename=_nom_telechargement(status, "mp4"))
 
 
 @app.get("/jobs/{job_id}/dubbed")
 def stream_dubbed(job_id: str) -> FileResponse:
     """Vidéo doublée pour la lecture dans l'interface (sans forcer le téléchargement)."""
+    status = _get_status_or_404(job_id)
+    return FileResponse(_video_finale(job_id, status), media_type="video/mp4")
+
+
+RACINE = Path(__file__).resolve().parent.parent
+
+
+@app.get("/jobs/{job_id}/kaggle")
+def kaggle_package(job_id: str) -> FileResponse:
+    """Paquet pour la synchronisation labiale sur Kaggle : vidéo d'origine, piste doublée, carnet, guide."""
+    import zipfile
+
+    status = _get_status_or_404(job_id)
+    dossier = jobs.project_dir(job_id)
+    piste = _fichier_projet(job_id, "doublage.wav", "Générez d'abord les voix du projet.")
+    paquet = dossier / f"voxlingo_kaggle_{job_id}.zip"
+    guide = (
+        "VoxLingo - synchronisation labiale sur Kaggle (gratuit, environ 30 h de GPU par semaine)\n\n"
+        "1. Ouvrez https://www.kaggle.com/code et créez un carnet : File > Import Notebook > lipsync_kaggle.ipynb\n"
+        "2. Session options : Accelerator = GPU T4 x2 (ou P100), Internet = activé\n"
+        "3. Add Input > Upload : ce fichier .zip\n"
+        "4. Run All, puis téléchargez video_synchronisee.mp4 (Output)\n"
+        "5. Dans VoxLingo, écran Résultat > Synchronisation labiale > Importer la vidéo synchronisée\n"
+    )
+    with zipfile.ZipFile(paquet, "w", zipfile.ZIP_STORED) as z:
+        # Vidéo exportée (même image que l'original, toujours au format MP4)
+        z.write(_fichier_projet(job_id, "doublage.mp4", "Générez d'abord les voix du projet."), "video_originale.mp4")
+        z.write(piste, "voix_doublee.wav")
+        z.write(RACINE / "kaggle" / "lipsync_kaggle.ipynb", "lipsync_kaggle.ipynb")
+        z.writestr("LISEZMOI.txt", guide)
+    return FileResponse(paquet, media_type="application/zip", filename=paquet.name)
+
+
+@app.post("/jobs/{job_id}/synchro")
+async def import_lipsync(job_id: str, video: UploadFile = File(...)) -> dict:
+    """Importe la vidéo synchronisée par Kaggle : elle devient la vidéo doublée téléchargeable."""
+    from pipeline.extract import probe_duration
+
+    status = _get_status_or_404(job_id)
+    cible = jobs.project_dir(job_id) / "doublage_synchro.mp4"
+    with cible.open("wb") as sortie:
+        while chunk := await video.read(CHUNK_BYTES):
+            sortie.write(chunk)
+    try:
+        duree = probe_duration(cible)
+    except Exception:
+        cible.unlink(missing_ok=True)
+        raise HTTPException(400, "Ce fichier n'est pas une vidéo lisible.") from None
+    if status.get("duree_s") and abs(duree - status["duree_s"]) > 2:
+        cible.unlink(missing_ok=True)
+        raise HTTPException(400, f"Cette vidéo dure {duree:.0f} s au lieu de {status['duree_s']:.0f} s : ce n'est pas le bon fichier.")
+    jobs.update_step(job_id, "synchro_labiale", etat="termine")
+    return jobs.update_status(job_id, synchro_importee=True)
+
+
+@app.delete("/jobs/{job_id}/synchro")
+def remove_lipsync(job_id: str) -> dict:
+    """Revient à la vidéo doublée sans synchronisation labiale."""
     _get_status_or_404(job_id)
-    return FileResponse(_fichier_projet(job_id, "doublage.mp4", "La vidéo doublée n'est pas encore prête."),
-                        media_type="video/mp4")
+    (jobs.project_dir(job_id) / "doublage_synchro.mp4").unlink(missing_ok=True)
+    jobs.update_step(job_id, "synchro_labiale", etat="kaggle")
+    return jobs.update_status(job_id, synchro_importee=False)
+
+
+def _video_finale(job_id: str, status: dict) -> Path:
+    """Vidéo synchronisée si elle a été importée, sinon la vidéo doublée."""
+    synchro = jobs.project_dir(job_id) / "doublage_synchro.mp4"
+    if status.get("synchro_importee") and synchro.is_file():
+        return synchro
+    return _fichier_projet(job_id, "doublage.mp4", "La vidéo doublée n'est pas encore prête.")
 
 
 @app.get("/jobs/{job_id}/subtitles")
@@ -518,6 +586,311 @@ def ouvrir_dossier() -> dict:
 
     os.startfile(get_settings().projects_dir)  # type: ignore[attr-defined]  # Windows uniquement
     return {"ok": True}
+
+
+# ───────────────────────── Locuteurs (phase 6) ─────────────────────────
+
+def _segments_modifiables(job_id: str) -> tuple[dict, dict]:
+    status = _get_status_or_404(job_id)
+    if status["etat"] in ("en_attente", "en_cours"):
+        raise HTTPException(409, "Un traitement est en cours : attendez sa fin pour modifier les locuteurs.")
+    if not (jobs.project_dir(job_id) / "segments.json").is_file():
+        raise HTTPException(404, "La transcription n'est pas encore disponible.")
+    return status, jobs.read_segments(job_id)
+
+
+def _fiche_locuteurs(data: dict) -> list[dict]:
+    from pipeline.voice_bank import registre, sexe_estime
+
+    total = sum(s["fin"] - s["debut"] for s in data["segments"]) or 1.0
+    fiche = []
+    for code, infos in jobs.locuteurs(data).items():
+        phrases = [s for s in data["segments"] if jobs.locuteur(s) == code]
+        duree = sum(s["fin"] - s["debut"] for s in phrases)
+        sexe = sexe_estime(infos.get("f0_hz"))
+        fiche.append({
+            "code": code, **infos,
+            "sexe_estime": sexe, "registre": registre(sexe or "homme", infos.get("f0_hz")),
+            "nb_phrases": len(phrases), "duree_s": round(duree, 1), "part": round(100 * duree / total),
+        })
+    return fiche
+
+
+@app.get("/jobs/{job_id}/locuteurs")
+def get_speakers(job_id: str) -> list[dict]:
+    """Locuteurs du projet : nom, couleur, voix choisie, temps de parole, timbre mesuré."""
+    _get_status_or_404(job_id)
+    if not (jobs.project_dir(job_id) / "segments.json").is_file():
+        return []
+    return _fiche_locuteurs(jobs.read_segments(job_id))
+
+
+class ModifLocuteur(BaseModel):
+    nom: str | None = None
+    voix: str | None = None  # « clone » ou identifiant d'une voix de la bibliothèque
+
+
+@app.put("/jobs/{job_id}/locuteurs/{code}")
+def update_speaker(job_id: str, code: str, modif: ModifLocuteur) -> list[dict]:
+    """Renomme un locuteur ou change sa voix (seules ses phrases seront régénérées)."""
+    from pipeline import voice_bank
+
+    _, data = _segments_modifiables(job_id)
+    fiche = jobs.locuteurs(data)
+    if code not in fiche:
+        raise HTTPException(404, "Locuteur introuvable.")
+    if modif.nom is not None:
+        fiche[code]["nom"] = modif.nom.strip() or fiche[code]["nom"]
+    if modif.voix is not None:
+        if modif.voix != "clone" and voice_bank.trouver(modif.voix) is None:
+            raise HTTPException(400, "Voix inconnue dans la bibliothèque.")
+        fiche[code]["voix"] = modif.voix
+    data["locuteurs"] = fiche
+    jobs.write_segments(job_id, data)
+    return _fiche_locuteurs(data)
+
+
+class Fusion(BaseModel):
+    source: str
+    cible: str
+
+
+@app.post("/jobs/{job_id}/locuteurs/fusion")
+def merge_speakers(job_id: str, fusion: Fusion) -> list[dict]:
+    """Fusionne deux locuteurs détectés à tort comme différents : `source` devient `cible`."""
+    _, data = _segments_modifiables(job_id)
+    fiche = jobs.locuteurs(data)
+    if fusion.source not in fiche or fusion.cible not in fiche or fusion.source == fusion.cible:
+        raise HTTPException(400, "Choisissez deux locuteurs différents.")
+    for seg in data["segments"]:
+        if jobs.locuteur(seg) == fusion.source:
+            seg["locuteur"] = fusion.cible
+    del fiche[fusion.source]
+    data["locuteurs"] = fiche
+    # L'échantillon de voix de la cible doit intégrer les nouvelles phrases
+    (jobs.project_dir(job_id) / "voix" / f"reference_{fusion.cible}.wav").unlink(missing_ok=True)
+    jobs.write_segments(job_id, data)
+    return _fiche_locuteurs(data)
+
+
+class ChoixLocuteur(BaseModel):
+    locuteur: str
+
+
+@app.put("/jobs/{job_id}/segments/{seg_id}/locuteur")
+def set_segment_speaker(job_id: str, seg_id: int, choix: ChoixLocuteur) -> dict:
+    """Change le locuteur d'une phrase (correction d'une erreur de détection)."""
+    _, data = _segments_modifiables(job_id)
+    if choix.locuteur not in jobs.locuteurs(data):
+        raise HTTPException(400, "Locuteur inconnu.")
+    seg = next((s for s in data["segments"] if s["id"] == seg_id), None)
+    if seg is None:
+        raise HTTPException(404, "Phrase introuvable.")
+    ancien = jobs.locuteur(seg)
+    seg["locuteur"] = choix.locuteur
+    for code in (ancien, choix.locuteur):
+        (jobs.project_dir(job_id) / "voix" / f"reference_{code}.wav").unlink(missing_ok=True)
+    jobs.write_segments(job_id, data)
+    return data
+
+
+class ChoixTon(BaseModel):
+    ton: Literal["energique", "calme", "intense", "doux", "neutre"]
+
+
+@app.put("/jobs/{job_id}/segments/{seg_id}/ton")
+def set_segment_tone(job_id: str, seg_id: int, choix: ChoixTon) -> dict:
+    """Corrige le ton d'une phrase : il règle l'expressivité de la voix doublée."""
+    _, data = _segments_modifiables(job_id)
+    seg = next((s for s in data["segments"] if s["id"] == seg_id), None)
+    if seg is None:
+        raise HTTPException(404, "Phrase introuvable.")
+    seg["ton"], seg["ton_corrige"] = choix.ton, True
+    jobs.write_segments(job_id, data)
+    return data
+
+
+@app.post("/jobs/{job_id}/locuteurs/detecter")
+def detect_speakers(job_id: str) -> dict:
+    """(Re)lance l'identification des locuteurs d'un projet déjà transcrit."""
+    _segments_modifiables(job_id)
+    status = jobs.update_status(job_id, etat="en_attente")
+    jobs.start_speakers(job_id)
+    return status
+
+
+@app.post("/jobs/{job_id}/locuteurs/attribuer")
+def auto_assign_voices(job_id: str) -> list[dict]:
+    """Attribue à chaque locuteur une voix différente de la bibliothèque, selon sa voix d'origine."""
+    from pipeline import voice_bank
+
+    _, data = _segments_modifiables(job_id)
+    fiche = jobs.locuteurs(data)
+    for code, voix_id in voice_bank.attribuer(fiche).items():
+        fiche[code]["voix"] = voix_id
+    data["locuteurs"] = fiche
+    jobs.write_segments(job_id, data)
+    return _fiche_locuteurs(data)
+
+
+@app.get("/jobs/{job_id}/locuteurs/{code}/original")
+def speaker_original(job_id: str, code: str) -> FileResponse:
+    """Échantillon de la voix d'origine du locuteur (créé à la demande)."""
+    from pipeline.runner import voix_des_locuteurs
+
+    _get_status_or_404(job_id)
+    data = jobs.read_segments(job_id)
+    if code not in jobs.locuteurs(data):
+        raise HTTPException(404, "Locuteur introuvable.")
+    chemin = jobs.project_dir(job_id) / "voix" / f"reference_{code}.wav"
+    if not chemin.is_file():
+        fiche = jobs.locuteurs(data)
+        fiche[code] = {**fiche[code], "voix": "clone"}  # force l'extraction de l'échantillon d'origine
+        voix_des_locuteurs(job_id, {**data, "locuteurs": fiche})
+    if not chemin.is_file():
+        chemin = jobs.project_dir(job_id) / "voix" / "reference.wav"
+    return FileResponse(chemin, media_type="audio/wav")
+
+
+@app.get("/jobs/{job_id}/locuteurs/{code}/doublee")
+def speaker_dubbed(job_id: str, code: str) -> FileResponse:
+    """Première phrase doublée du locuteur, pour écouter sa voix dans la langue cible."""
+    from pipeline.voice import fichier_brut
+
+    _get_status_or_404(job_id)
+    data = jobs.read_segments(job_id)
+    for seg in sorted((s for s in data["segments"] if jobs.locuteur(s) == code),
+                      key=lambda s: s["fin"] - s["debut"], reverse=True):
+        chemin = fichier_brut(jobs.project_dir(job_id) / "voix", seg["id"])
+        if chemin.is_file():
+            return FileResponse(chemin, media_type="audio/wav")
+    raise HTTPException(404, "Aucune voix doublée générée pour ce locuteur.")
+
+
+@app.get("/jobs/{job_id}/locuteurs/{code}/avatar")
+def speaker_avatar(job_id: str, code: str) -> FileResponse:
+    """Image de la vidéo au milieu de la plus longue phrase du locuteur (pour sa carte)."""
+    from pipeline.extract import _require
+
+    status = _get_status_or_404(job_id)
+    chemin = jobs.project_dir(job_id) / "voix" / f"avatar_{code}.jpg"
+    if not chemin.is_file():
+        data = jobs.read_segments(job_id)
+        phrases = [s for s in data["segments"] if jobs.locuteur(s) == code]
+        if not phrases:
+            raise HTTPException(404, "Locuteur introuvable.")
+        seg = max(phrases, key=lambda s: s["fin"] - s["debut"])
+        chemin.parent.mkdir(exist_ok=True)
+        subprocess.run(
+            [_require("ffmpeg"), "-y", "-v", "error", "-ss", f"{(seg['debut'] + seg['fin']) / 2:.2f}",
+             "-i", str(jobs.project_dir(job_id) / status["fichier"]), "-frames:v", "1",
+             "-vf", "crop='min(iw,ih)':'min(iw,ih)',scale=256:256", "-q:v", "4", str(chemin)],
+            capture_output=True,
+        )
+    if not chemin.is_file():
+        raise HTTPException(404, "Image indisponible.")
+    return FileResponse(chemin, media_type="image/jpeg")
+
+
+# ───────────────────────── Bibliothèque de voix ─────────────────────────
+
+_apercus = {"en_cours": False, "erreur": None}
+
+
+@app.get("/voix")
+def list_voices() -> dict:
+    """Voix de la bibliothèque (XTTS intégrées et personnelles) et état de la génération des aperçus."""
+    from pipeline import voice_bank
+
+    return {"voix": voice_bank.lire_banque(), "apercus": _apercus}
+
+
+@app.post("/voix/apercus")
+def generate_previews() -> dict:
+    """Génère en arrière-plan l'aperçu (et la mesure du registre) des voix qui n'en ont pas."""
+    import threading
+
+    from pipeline import voice_bank
+
+    if _apercus["en_cours"]:
+        return _apercus
+
+    def travail() -> None:
+        try:
+            voice_bank.generer_apercus()
+            _apercus["erreur"] = None
+        except Exception as exc:  # message lisible pour l'interface
+            logger.exception("Aperçus des voix")
+            _apercus["erreur"] = str(exc)
+        finally:
+            _apercus["en_cours"] = False
+
+    _apercus.update(en_cours=True, erreur=None)
+    threading.Thread(target=travail, name="apercus-voix", daemon=True).start()
+    return _apercus
+
+
+@app.get("/voix/{voix_id}/apercu")
+def voice_preview(voix_id: str) -> FileResponse:
+    from pipeline import voice_bank
+
+    chemin = voice_bank.fichier_apercu(voix_id)
+    if not chemin.is_file():
+        raise HTTPException(404, "Aperçu pas encore généré.")
+    return FileResponse(chemin, media_type="audio/wav")
+
+
+@app.post("/voix", status_code=201)
+async def add_voice(
+    echantillon: UploadFile = File(...),
+    nom: str = Form(...),
+    sexe: Literal["femme", "homme"] = Form(...),
+    age: Literal["enfant", "jeune", "adulte", "senior"] = Form("adulte"),
+) -> dict:
+    """Ajoute une voix personnelle (échantillon de 6 à 15 s) à la bibliothèque."""
+    import tempfile
+
+    from pipeline import voice_bank
+
+    suffixe = Path(echantillon.filename or "voix.wav").suffix or ".wav"
+    with tempfile.TemporaryDirectory() as dossier:
+        temporaire = Path(dossier) / f"echantillon{suffixe}"
+        temporaire.write_bytes(await echantillon.read())
+        return voice_bank.ajouter_voix_perso(nom, sexe, age, temporaire)
+
+
+class ModifVoix(BaseModel):
+    nom: str | None = None
+    sexe: Literal["femme", "homme"] | None = None
+    age: Literal["enfant", "jeune", "adulte", "senior"] | None = None
+
+
+@app.put("/voix/{voix_id}")
+def update_voice(voix_id: str, modif: ModifVoix) -> dict:
+    """Corrige le nom, le sexe ou l'âge apparent d'une voix."""
+    from pipeline import voice_bank
+
+    banque = voice_bank.lire_banque()
+    voix = next((v for v in banque if v["id"] == voix_id), None)
+    if voix is None:
+        raise HTTPException(404, "Voix introuvable.")
+    for champ, valeur in modif.model_dump(exclude_none=True).items():
+        voix[champ] = valeur.strip() if isinstance(valeur, str) and champ == "nom" else valeur
+    voix["registre"] = voice_bank.registre(voix["sexe"], voix.get("f0_hz"))
+    voice_bank.ecrire_banque(banque)
+    return voix
+
+
+@app.delete("/voix/{voix_id}")
+def delete_voice(voix_id: str) -> dict:
+    """Supprime une voix personnelle (les voix XTTS intégrées ne se suppriment pas)."""
+    from pipeline import voice_bank
+
+    try:
+        voice_bank.supprimer_voix_perso(voix_id)
+    except KeyError:
+        raise HTTPException(400, "Seules les voix personnelles peuvent être supprimées.") from None
+    return {"supprime": voix_id}
 
 
 @app.get("/health")

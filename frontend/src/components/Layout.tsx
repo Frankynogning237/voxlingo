@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { AnimatePresence, motion } from 'framer-motion'
-import { ArrowLeft, ChevronDown, CirclePlus, FolderClosed, House, Info, Settings, type LucideIcon } from 'lucide-react'
+import { ArrowLeft, ChevronDown, CirclePlus, FolderClosed, House, Info, Settings, UsersRound, type LucideIcon } from 'lucide-react'
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 
@@ -19,9 +19,17 @@ const NAV: NavItem[] = [
   { label: 'Paramètres', icon: Settings, route: { page: 'parametres' }, disponible: true },
 ]
 
+/** Menu de la maquette : l'entrée « Locuteurs » apparaît quand un projet est ouvert. */
+function navigation(current: Route): NavItem[] {
+  if (current.page !== 'projet' && current.page !== 'edition' && current.page !== 'locuteurs') return NAV
+  const locuteurs: NavItem = { label: 'Locuteurs', icon: UsersRound, route: { page: 'locuteurs', id: current.id }, disponible: true }
+  return [...NAV.slice(0, 3), locuteurs, ...NAV.slice(3)]
+}
+
 function isActive(item: Route, current: Route) {
   // Un projet en cours de traitement appartient au parcours « Nouveau doublage »
   if (current.page === 'projet' || current.page === 'edition') return item.page === 'nouveau'
+  if (current.page === 'voix') return item.page === 'parametres'
   return item.page === current.page
 }
 
@@ -98,7 +106,7 @@ function Sidebar({ current, footer }: { current: Route; footer: boolean }) {
         <Logo />
       </a>
       <nav className="relative flex flex-col gap-2">
-        {NAV.map((item) => (
+        {navigation(current).map((item) => (
           <NavLink key={item.label} item={item} active={isActive(item.route, current)} />
         ))}
       </nav>
@@ -189,7 +197,7 @@ export function BottomPanel({ children }: { children: ReactNode }) {
 }
 
 export function Layout({ current, children }: { current: Route; children: ReactNode }) {
-  const pageKey = current.page === 'projet' || current.page === 'edition' ? `${current.page}-${current.id}` : current.page
+  const pageKey = 'id' in current ? `${current.page}-${current.id}` : current.page
   const [slot, setSlot] = useState<HTMLElement | null>(null)
   const [bottomActive, setActive] = useState(false)
   return (
