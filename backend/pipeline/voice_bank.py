@@ -29,7 +29,8 @@ Sexe = Literal["femme", "homme"]
 Age = Literal["enfant", "jeune", "adulte", "senior"]
 
 # 20 voix couvrant tous les âges. Toutes partent d'une voix studio fournie avec XTTS v2
-# (speakers_xtts.pth, uniquement des voix d'adultes). Les voix d'enfants, de jeunes et de
+# (speakers_xtts.pth, uniquement des voix d'adultes), dont le sexe a été vérifié par la
+# mesure de la hauteur de voix (hommes : 88 à 123 Hz ; femmes : 168 à 222 Hz). Les voix d'enfants, de jeunes et de
 # seniors sont obtenues en transformant ces voix après synthèse (FFmpeg Rubber Band) :
 #   enfant : hauteur ×1,25 à ×1,45, résonances relevées ;
 #   jeune  : légèrement plus haute et plus rapide ;
@@ -45,7 +46,7 @@ VOIX_BIBLIOTHEQUE: list[dict[str, Any]] = [
     # Jeunes
     {"id": "ines", "nom": "Inès", "sexe": "femme", "age": "jeune", "base": "Tammie Ema", "pitch": 1.06, "tempo": 1.04},
     {"id": "chloe", "nom": "Chloé", "sexe": "femme", "age": "jeune", "base": "Alison Dietlinde", "pitch": 1.06, "tempo": 1.04},
-    {"id": "hugo", "nom": "Hugo", "sexe": "homme", "age": "jeune", "base": "Andrew Chipper", "pitch": 1.06, "tempo": 1.04},
+    {"id": "hugo", "nom": "Hugo", "sexe": "homme", "age": "jeune", "base": "Zacharie Aimilios", "pitch": 1.06, "tempo": 1.04},
     {"id": "nathan", "nom": "Nathan", "sexe": "homme", "age": "jeune", "base": "Royston Min", "pitch": 1.06, "tempo": 1.04},
     # Adultes
     {"id": "claire", "nom": "Claire", "sexe": "femme", "age": "adulte", "base": "Claribel Dervla"},
@@ -53,9 +54,9 @@ VOIX_BIBLIOTHEQUE: list[dict[str, Any]] = [
     {"id": "nadia", "nom": "Nadia", "sexe": "femme", "age": "adulte", "base": "Asya Anara"},
     {"id": "brenda", "nom": "Brenda", "sexe": "femme", "age": "adulte", "base": "Brenda Stern"},
     {"id": "marc", "nom": "Marc", "sexe": "homme", "age": "adulte", "base": "Damien Black"},
-    {"id": "karim", "nom": "Karim", "sexe": "homme", "age": "adulte", "base": "Badr Odhiambo"},
-    {"id": "julien", "nom": "Julien", "sexe": "homme", "age": "adulte", "base": "Craig Gutsy"},
-    {"id": "victor", "nom": "Victor", "sexe": "homme", "age": "adulte", "base": "Viktor Eka"},
+    {"id": "karim", "nom": "Karim", "sexe": "homme", "age": "adulte", "base": "Kumar Dahl"},
+    {"id": "julien", "nom": "Julien", "sexe": "homme", "age": "adulte", "base": "Luis Moray"},
+    {"id": "victor", "nom": "Victor", "sexe": "homme", "age": "adulte", "base": "Torcull Diarmuid"},
     # Seniors
     {"id": "jeanne", "nom": "Mamie Jeanne", "sexe": "femme", "age": "senior", "base": "Henriette Usha",
      "pitch": 0.94, "tempo": 0.92, "vibrato": 0.12},
@@ -70,6 +71,8 @@ VERSION_BIBLIOTHEQUE = 2
 
 TEXTE_APERCU = "Bonjour, voici un aperçu de ma voix pour vos doublages. J'espère qu'elle vous plaira !"
 SEUIL_SEXE_HZ = 165  # en dessous : voix plutôt masculine
+SEUIL_ENFANT_HZ = 270  # au-dessus : voix d'enfant probable
+PENALITE_AGE_HZ = 25  # écart ajouté aux voix jeunes et seniors lors de l'attribution automatique
 _verrou = threading.Lock()
 
 
@@ -167,14 +170,24 @@ def transformer(fichier: Path, parametres: dict[str, float]) -> None:
 
 # ───────────────────────── Mesure du timbre ─────────────────────────
 
-def mesurer_f0(wav: Path, debut: float = 0.0, duree: float | None = None) -> float | None:
+# Plage de recherche de la hauteur selon la voix : limiter la plage évite les « sauts d'octave »
+# (une voix grave mesurée au double de sa fréquence réelle).
+BORNES_F0 = {"enfant": (150, 600), "femme": (120, 450), "homme": (60, 260), None: (60, 500)}
+
+
+def bornes_f0(sexe: str | None, age: str | None = None) -> tuple[int, int]:
+    return BORNES_F0["enfant"] if age == "enfant" else BORNES_F0.get(sexe, BORNES_F0[None])
+
+
+def mesurer_f0(wav: Path, debut: float = 0.0, duree: float | None = None,
+               bornes: tuple[int, int] = BORNES_F0[None]) -> float | None:
     """Fréquence fondamentale médiane (Hz) d'un enregistrement, sur les parties voisées."""
     import librosa
 
     signal, taux = librosa.load(str(wav), sr=16000, mono=True, offset=debut, duration=duree)
     if signal.size < 16000 * 0.5:
         return None
-    f0, voise, _ = librosa.pyin(signal, fmin=60, fmax=500, sr=taux, frame_length=1024)
+    f0, voise, _ = librosa.pyin(signal, fmin=bornes[0], fmax=bornes[1], sr=taux, frame_length=1024)
     valeurs = f0[voise & ~np.isnan(f0)]
     return round(float(np.median(valeurs)), 1) if valeurs.size >= 10 else None
 
@@ -209,7 +222,7 @@ def ajouter_voix_perso(nom: str, sexe: str, age: str, echantillon: Path) -> dict
     )
     if resultat.returncode != 0:
         raise FFmpegError("Fichier audio illisible : utilisez un enregistrement WAV, MP3 ou M4A.")
-    f0 = mesurer_f0(cible)
+    f0 = mesurer_f0(cible, bornes=bornes_f0(sexe, age))
     voix = {
         "id": voix_id, "nom": nom.strip() or "Ma voix", "source": "perso", "fichier": fichier,
         "sexe": sexe, "age": age, "registre": registre(sexe, f0), "f0_hz": f0,
@@ -252,7 +265,7 @@ def generer_apercus() -> int:
     generer_voix(phrases, "fr", {n: spec(v) for n, v in enumerate(manquantes)}, dossier)
     for n, voix in enumerate(manquantes):
         fichier_brut(dossier, n).replace(fichier_apercu(voix["id"]))
-        voix["f0_hz"] = mesurer_f0(fichier_apercu(voix["id"]))
+        voix["f0_hz"] = mesurer_f0(fichier_apercu(voix["id"]), bornes=bornes_f0(voix["sexe"], voix["age"]))
         voix["registre"] = registre(voix["sexe"], voix["f0_hz"])
     (dossier / "manifeste.json").unlink(missing_ok=True)
     ecrire_banque(banque)
@@ -271,10 +284,29 @@ def attribuer(locuteurs: dict[str, dict[str, Any]]) -> dict[str, str]:
     for code, infos in sorted(locuteurs.items(), key=lambda kv: kv[1].get("f0_hz") is None):
         f0 = infos.get("f0_hz")
         sexe = sexe_estime(f0)
-        candidates = [v for v in banque if v["id"] not in prises and (sexe is None or v["sexe"] == sexe)]
-        candidates = candidates or [v for v in banque if v["id"] not in prises] or banque
+        # Voix d'enfant seulement pour une voix d'origine très aiguë ; voix inconnue : adulte
+        ages = {"adulte"} if f0 is None else ({"enfant"} if f0 >= SEUIL_ENFANT_HZ else {"jeune", "adulte", "senior"})
+        libres = [v for v in banque if v["id"] not in prises]
+        candidates = (
+            [v for v in libres if v["age"] in ages and (sexe is None or v["sexe"] == sexe)]
+            or [v for v in libres if v["age"] != "enfant" and (sexe is None or v["sexe"] == sexe)]
+            or libres
+            or banque
+        )
         if f0 is not None:
-            candidates.sort(key=lambda v: abs((v.get("f0_hz") or (200 if v["sexe"] == "femme" else 120)) - f0))
+            # L'âge ne se mesure pas : à hauteur proche, une voix d'adulte est préférée
+            candidates.sort(key=lambda v: abs((v.get("f0_hz") or (200 if v["sexe"] == "femme" else 120)) - f0)
+                            + (0 if v["age"] in ("adulte", "enfant") else PENALITE_AGE_HZ))
         choix[code] = candidates[0]["id"]
         prises.add(candidates[0]["id"])
     return choix
+
+
+def remesurer() -> None:
+    """Remesure la hauteur et le registre de toutes les voix à partir de leurs aperçus existants."""
+    banque = lire_banque()
+    for voix in banque:
+        if fichier_apercu(voix["id"]).is_file():
+            voix["f0_hz"] = mesurer_f0(fichier_apercu(voix["id"]), bornes=bornes_f0(voix["sexe"], voix["age"]))
+            voix["registre"] = registre(voix["sexe"], voix["f0_hz"])
+    ecrire_banque(banque)
