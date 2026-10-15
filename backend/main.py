@@ -194,6 +194,7 @@ def get_segments(job_id: str) -> dict:
 class TraductionModifiee(BaseModel):
     id: int
     traduction: str
+    texte: str | None = None  # correction de la transcription d'origine
 
 
 class EditionTraductions(BaseModel):
@@ -216,11 +217,18 @@ def save_translations(job_id: str, edition: EditionTraductions) -> dict:
     data = jobs.read_segments(job_id)
     marquer_fin_max(data["segments"], status.get("duree_s"))
     par_id = {e.id: e.traduction.strip() for e in edition.segments}
+    textes = {e.id: e.texte.strip() for e in edition.segments if e.texte and e.texte.strip()}
     for seg in data["segments"]:
         if seg["id"] in par_id:
             if not par_id[seg["id"]]:
                 raise HTTPException(400, f"La traduction du segment {seg['id'] + 1} est vide.")
             seg["traduction"] = par_id[seg["id"]]
+            correction = textes.get(seg["id"])
+            if correction and correction != seg["texte"]:
+                # Transcription corrigée : la traduction devra être refaite ; le minutage des mots
+                # ne correspond plus au nouveau texte (le découpage se fera sur les pauses)
+                seg["texte"], seg["texte_corrige"], seg["a_retraduire"] = correction, True, True
+                seg["mots"] = []
             seg["trop_long"] = est_trop_long(seg, seg["traduction"], status["langue_source"], status["langue_cible"],
                                              jobs.strategie(status))
     jobs.write_segments(job_id, data)
@@ -265,12 +273,20 @@ def set_strategy(job_id: str, choix: ChoixStrategie) -> dict:
     return status
 
 
+class DemandeTraduction(BaseModel):
+    ids: list[int] | None = None  # None : toutes les phrases ; sinon seulement celles-ci
+
+
 @app.post("/jobs/{job_id}/traduire")
-def retranslate(job_id: str) -> dict:
-    """Relance la traduction par l'IA (écrase les modifications)."""
+def retranslate(job_id: str, demande: DemandeTraduction | None = None) -> dict:
+    """Relance la traduction par l'IA : toutes les phrases (écrase les modifications), ou seulement
+    les phrases indiquées (texte d'origine corrigé), les autres traductions étant conservées."""
     _require_editable(job_id)
+    ids = set(demande.ids) if demande and demande.ids is not None else None
+    if ids is not None and not ids:
+        raise HTTPException(400, "Aucune phrase à retraduire.")
     status = jobs.update_status(job_id, etat="en_attente")
-    jobs.start_translation(job_id)
+    jobs.start_translation(job_id, ids)
     return status
 
 

@@ -15,6 +15,7 @@ import {
   Scissors,
   Sparkles,
   TriangleAlert,
+  Languages,
   Undo2,
   UsersRound,
 } from 'lucide-react'
@@ -309,6 +310,9 @@ function SegmentRow({
   onRevert,
   onAdjust,
   onTone,
+  original,
+  originalModifie,
+  onChangeOriginal,
   locuteurs,
   onSpeaker,
 }: {
@@ -326,6 +330,9 @@ function SegmentRow({
   locuteurs: PisteLocuteur[]
   onSpeaker: (code: string) => void
   onTone: (ton: Ton) => void
+  original: string
+  originalModifie: boolean
+  onChangeOriginal: (v: string) => void
 }) {
   const [menu, setMenu] = useState(false)
   const alerte = tropLong(seg, traduction, langues.strategie, langues.cible)
@@ -341,7 +348,20 @@ function SegmentRow({
     >
       <ChoixLocuteurLigne seg={seg} locuteurs={locuteurs} onSpeaker={onSpeaker} />
       <span className="text-[15px] text-white/90 tabular-nums">{formatHorodatage(seg.debut)}</span>
-      <p className="pr-2 text-[15px] leading-snug text-white">{seg.texte}</p>
+      <div className="pr-2">
+        <AutoTextarea
+          value={original}
+          onChange={onChangeOriginal}
+          onFocus={onSelect}
+          label={`Texte original du segment ${seg.id + 1}`}
+        />
+        {(originalModifie || seg.a_retraduire) && (
+          <p className="px-2 text-[12px] text-warning">Texte corrigé : pensez à retraduire</p>
+        )}
+        {!originalModifie && !seg.a_retraduire && seg.texte_corrige && (
+          <p className="px-2 text-[12px] text-white/45">Transcription corrigée</p>
+        )}
+      </div>
       <ArrowRight className="size-4 text-white/60" />
       <AutoTextarea value={traduction} onChange={onChange} onFocus={onSelect} label={`Traduction du segment ${seg.id + 1}`} />
       <div className="flex justify-center">
@@ -455,6 +475,8 @@ export function TranslationEditor({ job }: { job: Job }) {
   const { data } = useQuery({ queryKey: ['segments', job.id], queryFn: () => getSegments(job.id) })
   const { data: peaks } = useQuery({ queryKey: ['waveform', job.id], queryFn: () => getWaveform(job.id) })
   const [brouillon, setBrouillon] = useState<Record<number, string>>({})
+  // Corrections de la transcription d'origine, pas encore enregistrées
+  const [originaux, setOriginaux] = useState<Record<number, string>>({})
   const [selection, setSelection] = useState<number | null>(null)
   const [confirmation, setConfirmation] = useState(false)
   const [message, setMessage] = useState<{ type: 'succes' | 'erreur'; texte: string } | null>(null)
@@ -471,9 +493,12 @@ export function TranslationEditor({ job }: { job: Job }) {
     () => Object.fromEntries(segments.map((s) => [s.id, brouillon[s.id] ?? s.traduction ?? ''])),
     [segments, brouillon],
   )
+  const originalModifie = (s: Segment) => originaux[s.id] !== undefined && originaux[s.id].trim() !== s.texte
   const modifications = segments
-    .filter((s) => brouillon[s.id] !== undefined && brouillon[s.id] !== s.traduction)
-    .map((s) => ({ id: s.id, traduction: brouillon[s.id] }))
+    .filter((s) => (brouillon[s.id] !== undefined && brouillon[s.id] !== s.traduction) || originalModifie(s))
+    .map((s) => ({ id: s.id, traduction: traductions[s.id], ...(originalModifie(s) ? { texte: originaux[s.id].trim() } : {}) }))
+  // Phrases dont le texte d'origine a été corrigé : leur traduction est à refaire
+  const aRetraduire = segments.filter((s) => s.a_retraduire || originalModifie(s)).map((s) => s.id)
   const strategie: StrategieDuree = job.options?.strategie_duree ?? 'reformuler'
   const langues = { source: data?.langue ?? job.langue_source, cible: job.langue_cible, strategie }
   const nbTropLongs = segments.filter((s) => tropLong(s, traductions[s.id], strategie, langues.cible)).length
@@ -482,6 +507,7 @@ export function TranslationEditor({ job }: { job: Job }) {
   const appliquer = (nouvelles: Transcription) => {
     queryClient.setQueryData(['segments', job.id], nouvelles)
     setBrouillon({})
+    setOriginaux({})
   }
   const notifier = (type: 'succes' | 'erreur', texte: string) => {
     setMessage({ type, texte })
@@ -497,11 +523,16 @@ export function TranslationEditor({ job }: { job: Job }) {
     onError: (e) => notifier('erreur', (e as Error).message),
   })
   const valider = useMutation({
-    mutationFn: () => validateTranslations(job.id, segments.map((s) => ({ id: s.id, traduction: traductions[s.id] }))),
+    mutationFn: () =>
+      validateTranslations(
+        job.id,
+        segments.map((s) => ({ id: s.id, traduction: traductions[s.id], ...(originalModifie(s) ? { texte: originaux[s.id].trim() } : {}) })),
+      ),
     onSuccess: async (j) => {
       queryClient.setQueryData(['job', job.id], j)
       await queryClient.invalidateQueries({ queryKey: ['segments', job.id] })
       setBrouillon({})
+      setOriginaux({})
       notifier('succes', 'Traduction validée : génération des voix lancée.')
     },
     onError: (e) => notifier('erreur', (e as Error).message),
@@ -518,6 +549,21 @@ export function TranslationEditor({ job }: { job: Job }) {
     mutationFn: () => retranslate(job.id),
     onSuccess: (j) => {
       setBrouillon({})
+      setOriginaux({})
+      queryClient.setQueryData(['job', job.id], j)
+      void queryClient.invalidateQueries({ queryKey: ['job', job.id] })
+    },
+    onError: (e) => notifier('erreur', (e as Error).message),
+  })
+  const retraduireCorrigees = useMutation({
+    // Les corrections en cours sont enregistrées, puis seules ces phrases sont retraduites
+    mutationFn: async () => {
+      if (modifications.length > 0) await saveTranslations(job.id, modifications)
+      return retranslate(job.id, aRetraduire)
+    },
+    onSuccess: (j) => {
+      setBrouillon({})
+      setOriginaux({})
       queryClient.setQueryData(['job', job.id], j)
       void queryClient.invalidateQueries({ queryKey: ['job', job.id] })
     },
@@ -554,7 +600,7 @@ export function TranslationEditor({ job }: { job: Job }) {
     onSuccess: (d) => queryClient.setQueryData(['segments', job.id], d),
     onError: (e) => notifier('erreur', (e as Error).message),
   })
-  const occupe = changerStrategie.isPending || ajuster.isPending || enregistrer.isPending || valider.isPending || reinitialiser.isPending || retraduire.isPending
+  const occupe = retraduireCorrigees.isPending || changerStrategie.isPending || ajuster.isPending || enregistrer.isPending || valider.isPending || reinitialiser.isPending || retraduire.isPending
 
   // Le segment sous le curseur de lecture est mis en évidence dans le tableau
   const segmentLu = segments.find((s) => clock.temps >= s.debut && clock.temps < s.fin)
@@ -628,6 +674,18 @@ export function TranslationEditor({ job }: { job: Job }) {
             label="Reformuler plutôt qu'accélérer"
           />
         </label>
+        {aRetraduire.length > 0 && (
+          <button
+            type="button"
+            disabled={occupe}
+            onClick={() => retraduireCorrigees.mutate()}
+            title="Retraduit uniquement les phrases dont vous avez corrigé le texte d'origine (les autres traductions sont conservées)"
+            className="flex h-11 items-center gap-2.5 rounded-xl border border-warning/60 bg-warning/10 px-5 text-[15px] text-white transition-colors duration-200 hover:border-warning disabled:opacity-50"
+          >
+            <Languages className="size-5 text-warning" /> Retraduire les phrases corrigées
+            <span className="rounded-full bg-warning px-2 text-[12px] font-semibold text-black">{aRetraduire.length}</span>
+          </button>
+        )}
         <button
           type="button"
           disabled={occupe || nbTropLongs === 0}
@@ -707,6 +765,9 @@ export function TranslationEditor({ job }: { job: Job }) {
                 locuteurs={pistes}
                 onSpeaker={(code) => changerLocuteur.mutate({ segId: seg.id, code })}
                 onTone={(ton) => changerTon.mutate({ segId: seg.id, ton })}
+                original={originaux[seg.id] ?? seg.texte}
+                originalModifie={originalModifie(seg)}
+                onChangeOriginal={(v) => setOriginaux((o) => ({ ...o, [seg.id]: v }))}
               />
             ))}
           </motion.div>

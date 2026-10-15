@@ -285,6 +285,39 @@ def _traduire_nllb(segments: list[dict[str, Any]], source: str, cible: str,
 
 # ───────────────────────────── Point d'entrée ─────────────────────────────
 
+def traduire_selection(
+    segments: list[dict[str, Any]],
+    ids: set[int],
+    source: str,
+    cible: str,
+    on_progress: Callable[[float], None] | None = None,
+) -> dict[int, str]:
+    """Retraduit seulement les segments `ids` (texte d'origine corrigé), avec pour contexte
+    les phrases voisines et leurs traductions actuelles. Renvoie {id: nouvelle traduction}."""
+    indices = [i for i, s in enumerate(segments) if s["id"] in ids]
+    if not indices:
+        return {}
+    if source == cible:
+        return {segments[i]["id"]: segments[i]["texte"] for i in indices}
+    deja = [s.get("traduction") or "" for s in segments]
+    resultat: dict[int, str] = {}
+    modele = get_runtime().ollama_model
+    if modele != "nllb" and ollama_disponible(modele):
+        try:
+            with httpx.Client(base_url=get_settings().ollama_url, timeout=180) as client:
+                for n, i in enumerate(indices):
+                    resultat[segments[i]["id"]] = _traduire_segment(client, modele, segments, i, source, cible, deja)
+                    if on_progress:
+                        on_progress((n + 1) / len(indices))
+            return resultat
+        except (httpx.HTTPError, TranslationError) as exc:
+            logger.warning("Ollama a échoué (%s) : passage à NLLB", exc)
+        finally:
+            _decharger_ollama(modele)
+    selection = [segments[i] for i in indices]
+    return dict(zip((s["id"] for s in selection), _traduire_nllb(selection, source, cible, on_progress), strict=True))
+
+
 def translate_segments(
     segments: list[dict[str, Any]],
     source: str,

@@ -97,6 +97,10 @@ export type Segment = {
   /** Ton de la phrase d'origine (phase 7), corrigeable */
   ton?: Ton
   ton_corrige?: boolean
+  /** Transcription corrigée à la main */
+  texte_corrige?: boolean
+  /** Texte d'origine corrigé depuis la dernière traduction : à retraduire */
+  a_retraduire?: boolean
 }
 
 export type Transcription = {
@@ -149,14 +153,17 @@ async function send<T>(path: string, method: string, body?: unknown): Promise<T>
   return res.json()
 }
 
-export type TraductionModifiee = { id: number; traduction: string }
+/** Traduction modifiée ; `texte` corrige aussi la transcription d'origine. */
+export type TraductionModifiee = { id: number; traduction: string; texte?: string }
 
 export const saveTranslations = (id: string, segments: TraductionModifiee[]) =>
   send<Transcription>(`/jobs/${id}/segments`, 'PUT', { segments })
 export const validateTranslations = (id: string, segments: TraductionModifiee[]) =>
   send<Job>(`/jobs/${id}/valider`, 'POST', { segments })
 export const resetTranslations = (id: string) => send<Transcription>(`/jobs/${id}/reinitialiser`, 'POST')
-export const retranslate = (id: string) => send<Job>(`/jobs/${id}/traduire`, 'POST')
+/** Relance la traduction par l'IA : toutes les phrases, ou seulement `ids` (phrases corrigées). */
+export const retranslate = (id: string, ids?: number[]) =>
+  send<Job>(`/jobs/${id}/traduire`, 'POST', { ids: ids ?? null })
 export type ValeursParametres = {
   force_device: 'auto' | 'cpu' | 'cuda'
   whisper_model: string

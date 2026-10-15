@@ -220,11 +220,11 @@ def start_job(job_id: str) -> None:
     logger.info("Tâche %s lancée", job_id)
 
 
-def start_translation(job_id: str) -> None:
-    """Relance uniquement l'étape de traduction dans un thread en arrière-plan."""
+def start_translation(job_id: str, ids: set[int] | None = None) -> None:
+    """Relance l'étape de traduction (toutes les phrases ou seulement `ids`) en arrière-plan."""
     from pipeline.runner import run_translation
 
-    threading.Thread(target=run_translation, args=(job_id,), name=f"trad-{job_id}", daemon=True).start()
+    threading.Thread(target=run_translation, args=(job_id, ids), name=f"trad-{job_id}", daemon=True).start()
 
 
 def start_adjustment(job_id: str, ids: set[int] | None) -> None:

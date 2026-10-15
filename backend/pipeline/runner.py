@@ -112,14 +112,17 @@ def _sous_progression(report: Callable[[float], None], debut: float, fin: float)
     return lambda fraction: report(debut + (fin - debut) * fraction)
 
 
-def _do_translate(job_id: str, report: Callable[[float], None]) -> None:
-    """Traduit tous les segments, puis ajuste les phrases trop longues si l'option est active."""
+def _do_translate(job_id: str, report: Callable[[float], None], ids: set[int] | None = None) -> None:
+    """Traduit les segments (tous, ou seulement `ids`), puis ajuste les phrases trop longues si l'option est active."""
     status = jobs.read_status(job_id)
     source, cible = status["langue_source"], status["langue_cible"]
     ajuster = status.get("options", {}).get("ajuster_trop_longs", True)
     data = jobs.read_segments(job_id)
     data["duree_s"] = status.get("duree_s") or data.get("duree_s")
     marquer_fin_max(data["segments"], data["duree_s"])
+    if ids is not None:
+        _retraduire_selection(job_id, data, ids, source, cible, ajuster, report)
+        return
 
     fin_traduction = 1 - PART_AJUSTEMENT if ajuster else 1.0
     traductions, moteur = translate_segments(
@@ -128,6 +131,7 @@ def _do_translate(job_id: str, report: Callable[[float], None]) -> None:
     for seg, texte in zip(data["segments"], traductions, strict=True):
         seg["traduction_ia"] = texte
         seg["traduction"] = texte
+        seg["a_retraduire"] = False
         seg["trop_long"] = est_trop_long(seg, texte, source, cible, jobs.strategie(status))
     data["langue_cible"] = cible
     data["moteur_traduction"] = moteur
@@ -139,6 +143,28 @@ def _do_translate(job_id: str, report: Callable[[float], None]) -> None:
                                  strategie=jobs.strategie(status))
         jobs.write_segments(job_id, data)
     jobs.update_status(job_id, moteur_traduction=moteur, traduction_validee=False, dernier_ajustement=bilan)
+
+
+def _retraduire_selection(job_id: str, data: dict, ids: set[int], source: str, cible: str,
+                           ajuster: bool, report: Callable[[float], None]) -> None:
+    """Retraduit seulement les phrases dont le texte d'origine a été corrigé ; les autres sont conservées."""
+    from pipeline.translate import traduire_selection
+
+    status = jobs.read_status(job_id)
+    nouvelles = traduire_selection(data["segments"], ids, source, cible,
+                                   on_progress=_sous_progression(report, 0, 0.8 if ajuster else 1.0))
+    for seg in data["segments"]:
+        if seg["id"] in nouvelles:
+            seg["traduction_ia"] = seg["traduction"] = nouvelles[seg["id"]]
+            seg["a_retraduire"] = False
+            seg["trop_long"] = est_trop_long(seg, seg["traduction"], source, cible, jobs.strategie(status))
+    jobs.write_segments(job_id, data)
+    if ajuster and any(seg["trop_long"] for seg in data["segments"] if seg["id"] in nouvelles):
+        bilan = ajuster_segments(data, source, cible, ids=set(nouvelles), strategie=jobs.strategie(status),
+                                 on_progress=_sous_progression(report, 0.8, 1.0))
+        jobs.write_segments(job_id, data)
+        jobs.update_status(job_id, dernier_ajustement=bilan)
+    jobs.update_status(job_id, traduction_validee=False)
 
 
 def _do_adjust(job_id: str, ids: set[int] | None, report: Callable[[float], None]) -> None:
@@ -257,11 +283,12 @@ def run_adjustment(job_id: str, ids: set[int] | None = None) -> None:
     _guarded(job_id, lambda: _run_step(job_id, "traduction", lambda report: _do_adjust(job_id, ids, report)))
 
 
-def run_translation(job_id: str) -> None:
-    """Relance uniquement la traduction (bouton « Traduction assistée par IA »)."""
+def run_translation(job_id: str, ids: set[int] | None = None) -> None:
+    """Relance la traduction : toutes les phrases (« Traduction assistée par IA ») ou seulement `ids`
+    (« Retraduire les phrases corrigées »)."""
     jobs.update_status(job_id, progression=WEIGHTS["extraction"] + WEIGHTS["transcription"])
     _reinitialiser_etapes(job_id, "traduction")
-    _guarded(job_id, lambda: _run_step(job_id, "traduction", lambda report: _do_translate(job_id, report)))
+    _guarded(job_id, lambda: _run_step(job_id, "traduction", lambda report: _do_translate(job_id, report, ids)))
 
 
 # ───────────────────────── Phase 4 : voix et export ─────────────────────────
