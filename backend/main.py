@@ -866,6 +866,11 @@ def speaker_avatar(job_id: str, code: str) -> FileResponse:
     from pipeline.extract import _require
 
     status = _get_status_or_404(job_id)
+    # Visage du personnage reconnu à l'image (lecture des scènes), s'il y en a un
+    personnage = (jobs.locuteurs(jobs.read_segments(job_id)).get(code) or {}).get("personnage")
+    visage = jobs.project_dir(job_id) / "visages" / f"perso_{personnage}.jpg"
+    if personnage is not None and visage.is_file():
+        return FileResponse(visage, media_type="image/jpeg")
     chemin = jobs.project_dir(job_id) / "voix" / f"avatar_{code}.jpg"
     if not chemin.is_file():
         data = jobs.read_segments(job_id)

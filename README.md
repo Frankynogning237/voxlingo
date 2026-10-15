@@ -97,7 +97,15 @@ Après la transcription, VoxLingo **identifie automatiquement tous les locuteurs
    trouve qui parle et quand, même quand les personnes se coupent la parole ;
 2. **registres de hauteur** : si une même voix joue plusieurs personnages (vidéos générées par IA, doublages),
    ses répliques sont séparées par leur hauteur de voix (un garçon à 240 Hz, une fille à 400 Hz…) ;
-3. une phrase dite par plusieurs personnes est **découpée en répliques**, chacune avec son locuteur.
+3. **lecture des scènes** : VoxLingo regarde aussi la vidéo. Il repère les visages (MediaPipe), voit quelle
+   bouche bouge pendant chaque réplique et reconnaît chaque personnage d'un plan à l'autre (empreinte du
+   visage ArcFace, apparence générale DINOv2, couleurs des cheveux et de la tenue). Quand on voit qui parle,
+   l'image l'emporte ; sinon la réplique revient au personnage de la scène qui a cette voix. La page
+   Locuteurs affiche le visage de chaque personnage (`visages/perso_N.jpg` du projet) ;
+4. une phrase dite par plusieurs personnes est **découpée en répliques**, chacune avec son locuteur.
+
+Les modèles de vision (~110 Mo, usage personnel non commercial pour ArcFace) se téléchargent au premier usage.
+Sur un processeur, la lecture des scènes prend environ 0,8 fois la durée de la vidéo.
 
 pyannote demande, une seule fois, un compte gratuit sur huggingface.co : accepter les conditions de
 [pyannote/speaker-diarization-community-1](https://huggingface.co/pyannote/speaker-diarization-community-1),

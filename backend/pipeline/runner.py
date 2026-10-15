@@ -262,9 +262,18 @@ def _identifier_locuteurs(job_id: str, report: Callable[[float], None]) -> None:
     # Avant la traduction, une phrase dite par plusieurs personnes est découpée en répliques ;
     # après, on garde les phrases (et leurs traductions) telles quelles.
     deja_traduit = any(s.get("traduction") for s in data["segments"])
+    # Lecture des scènes : qui est à l'image et quelle bouche bouge (facultative : la voix suffit sans)
+    vision = None
+    try:
+        from pipeline.vision import analyser
+
+        vision = analyser(dossier / status["fichier"], dossier, status.get("duree_s"),
+                          on_progress=_sous_progression(report, 0, 0.4))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[%s] Lecture des scènes impossible (%s) : identification par la voix seule", job_id, exc)
     data["locuteurs"] = identifier_locuteurs(
         data["segments"], voix_isolee if voix_isolee.is_file() else dossier / "audio.wav",
-        on_progress=_sous_progression(report, 0, 0.85), decouper=not deja_traduit,
+        on_progress=_sous_progression(report, 0.4, 0.85), decouper=not deja_traduit, vision=vision,
     )
     _mesurer_locuteurs(job_id, data)
     _analyser_tons(job_id, data, _sous_progression(report, 0.85, 1.0))

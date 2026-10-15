@@ -168,10 +168,17 @@ def _attribuer(mots: list[dict[str, Any]], repliques: list[list[int]], empreinte
     hauteurs = [_mediane_f0([mots[k] for k in r]) for r in repliques]
     durees = [mots[r[-1]]["fin"] - mots[r[0]]["debut"] for r in repliques]
     if etiquettes_pyannote is not None:
-        # 1. Locuteurs trouvés par pyannote (toutes les répliques en ont un)
-        longues = list(range(len(repliques)))
+        # 1. Locuteurs trouvés par pyannote. Seules les répliques assez longues (hauteur fiable)
+        #    servent à chercher des registres ; les autres sont placées à l'étape 4.
         noms = {nom: n for n, nom in enumerate(dict.fromkeys(etiquettes_pyannote))}
-        etiquettes = [noms[nom] for nom in etiquettes_pyannote]
+        longues = [i for i in range(len(repliques)) if durees[i] >= DUREE_MIN_EMPREINTE_S]
+        # Un locuteur pyannote qui n'a que des répliques courtes est gardé avec sa plus longue
+        for nom in noms:
+            siennes = [i for i in range(len(repliques)) if etiquettes_pyannote[i] == nom]
+            if not any(i in longues for i in siennes):
+                longues.append(max(siennes, key=durees.__getitem__))
+        longues.sort()
+        etiquettes = [noms[etiquettes_pyannote[i]] for i in longues]
     else:
         longues = sorted(empreintes)
         if not longues:
@@ -235,13 +242,17 @@ def _attribuer(mots: list[dict[str, Any]], repliques: list[list[int]], empreinte
         if i in groupe:
             resultat.append(groupe[i])
             continue
-        voisins = [groupe[j] for j in (max((j for j in groupe if j < i), default=None),
-                                       min((j for j in groupe if j > i), default=None)) if j is not None]
-        proche_global = _plus_proche(hauteurs[i], sorted(h), h)
+        # Avec pyannote, une réplique reste chez un locuteur issu du même locuteur pyannote
+        permis = sorted(h) if etiquettes_pyannote is None else sorted(
+            {g for j, g in groupe.items() if etiquettes_pyannote[j] == etiquettes_pyannote[i]})
+        places = {j: g for j, g in groupe.items() if g in permis}
+        voisins = [places[j] for j in (max((j for j in places if j < i), default=None),
+                                       min((j for j in places if j > i), default=None)) if j is not None]
+        proche_global = _plus_proche(hauteurs[i], permis, h)
         proche_voisin = _plus_proche(hauteurs[i], voisins, h)
         # Le voisin l'emporte sauf si un autre locuteur a une voix nettement plus proche
         if hauteurs[i] and h.get(proche_voisin) and h.get(proche_global) and (
-            abs(np.log2(hauteurs[i] / h[proche_voisin])) - abs(np.log2(hauteurs[i] / h[proche_global])) > 0.2
+            abs(np.log2(hauteurs[i] / h[proche_voisin])) - abs(np.log2(hauteurs[i] / h[proche_global])) > MARGE_VOISIN
         ):
             resultat.append(proche_global)
         else:
@@ -386,15 +397,92 @@ def _etiquette(tours: list[tuple[float, float, str]], debut: float, fin: float) 
     return min(tours, key=lambda t: min(abs(t[0] - milieu), abs(t[1] - milieu)))[2]
 
 
+PERSONNAGE = 1000  # groupes « vus » : PERSONNAGE + numéro du personnage à l'image
+COUVERTURE_MIN_VISION = 0.2  # part de la parole où l'image désigne qui parle, pour lui faire confiance
+PART_MIN_ASSOCIATION = 0.2  # une voix est associée aux personnages vus la prononcer sur ≥ 20 % de son temps
+
+
+def _dans_la_scene(vision: dict[str, Any], debut: float, fin: float, groupe: int, hauteur: float | None,
+                   association: dict[int, dict[int, float]], hauteur_perso: dict[int, float | None]) -> int | None:
+    """Personnage de la scène qui a dit une réplique dont on ne voit pas la bouche bouger.
+
+    Peut l'avoir dite un personnage à l'image (pendant la réplique, sinon dans les 2 s autour)
+    déjà vu parler avec cette voix, ou dont la voix est encore inconnue ; pas un personnage
+    dont on sait qu'il parle avec une autre voix. Parmi eux : celui déjà vu avec cette voix et
+    de hauteur la plus proche, sinon le plus présent à l'image."""
+    from pipeline.vision import visibles
+
+    connus_ailleurs = {p for g, siens in association.items() if g != groupe for p in siens}
+    for marge in (0.0, 2.0):
+        presence = visibles(vision, debut, fin, marge)
+        avec_cette_voix = [p for p in presence if p in association.get(groupe, {})]
+        if avec_cette_voix:
+            return _plus_proche(hauteur, sorted(avec_cette_voix, key=lambda p: -presence[p]), hauteur_perso)
+        inconnus = [p for p in presence if p not in connus_ailleurs]
+        if inconnus:
+            return max(inconnus, key=presence.__getitem__)
+    return None
+
+
+def _avec_vision(mots: list[dict[str, Any]], repliques: list[list[int]], groupe_audio: list[int],
+                 vision: dict[str, Any]) -> list[int]:
+    """Croise l'écoute et l'image. Une réplique où l'on voit une bouche bouger appartient à ce
+    personnage. Les autres (personnage hors champ, de dos…) vont au personnage que leur groupe de
+    voix désigne le plus souvent ; si cette voix joue plusieurs personnages (voix de synthèse),
+    à celui de la scène en cours dont la hauteur de voix est la plus proche."""
+    from pipeline.vision import qui_parle
+
+    durees = [mots[r[-1]]["fin"] - mots[r[0]]["debut"] for r in repliques]
+    hauteurs = [_mediane_f0([mots[k] for k in r]) for r in repliques]
+    vus = [qui_parle(vision, mots[r[0]]["debut"], mots[r[-1]]["fin"])[0] for r in repliques]
+    couverture = sum(d for d, v in zip(durees, vus, strict=True) if v is not None) / (sum(durees) or 1.0)
+    logger.info("Lecture des scènes : la bouche qui parle est visible sur %.0f %% de la parole", 100 * couverture)
+    if couverture < COUVERTURE_MIN_VISION:
+        return groupe_audio
+
+    association: dict[int, dict[int, float]] = {}
+    for g, v, d in zip(groupe_audio, vus, durees, strict=True):
+        if v is not None:
+            association.setdefault(g, {})
+            association[g][v] = association[g].get(v, 0.0) + d
+    hauteur_perso = {
+        v: _mediane_f0([mots[k] for r, vr in zip(repliques, vus, strict=True) if vr == v for k in r])
+        for v in set(vus) if v is not None
+    }
+    resultat: list[int] = []
+    for r, g, v, h in zip(repliques, groupe_audio, vus, hauteurs, strict=True):
+        if v is not None:
+            resultat.append(PERSONNAGE + v)
+            continue
+        siens = association.get(g, {})
+        total = sum(siens.values())
+        debut, fin = mots[r[0]]["debut"], mots[r[-1]]["fin"]
+        choix = _dans_la_scene(vision, debut, fin, g, h, association, hauteur_perso)
+        if choix is not None:
+            resultat.append(PERSONNAGE + choix)
+            continue
+        # Sinon, les personnages qui prononcent le plus souvent cette voix dans toute la vidéo
+        candidats = [p for p, d in siens.items() if d >= PART_MIN_ASSOCIATION * total]
+        if not candidats:
+            resultat.append(g)  # voix jamais vue parler : locuteur hors champ (narrateur…)
+        elif len(candidats) == 1 or not h:
+            resultat.append(PERSONNAGE + max(candidats, key=siens.__getitem__))
+        else:
+            resultat.append(PERSONNAGE + _plus_proche(h, candidats, hauteur_perso))
+    return resultat
+
+
 def identifier_locuteurs(
     segments: list[dict[str, Any]],
     audio: Path,
     on_progress: Callable[[float], None] | None = None,
     decouper: bool = True,
-) -> dict[str, dict[str, str]]:
+    vision: dict[str, Any] | None = None,
+) -> dict[str, dict[str, Any]]:
     """Ajoute `locuteur` (« SPEAKER_00 »…) à chaque phrase et renvoie la fiche des locuteurs.
 
-    `audio` : de préférence la voix isolée (sans musique). Avec `decouper`, une phrase où
+    `audio` : de préférence la voix isolée (sans musique). `vision` : lecture des scènes
+    (pipeline/vision.py), qui l'emporte quand on voit qui parle. Avec `decouper`, une phrase où
     plusieurs personnes parlent est remplacée, dans la liste, par une phrase par réplique.
     """
     if not segments:
@@ -414,6 +502,8 @@ def identifier_locuteurs(
     else:
         repliques = _repliques(mots)
         groupe_replique = _attribuer(mots, repliques, _empreintes(audio, mots, repliques, progression))
+    if vision and vision.get("personnages"):
+        groupe_replique = _avec_vision(mots, repliques, groupe_replique, vision)
     groupe_mot = [0] * len(mots)
     for replique, g in zip(repliques, groupe_replique, strict=True):
         for k in replique:
@@ -424,6 +514,7 @@ def identifier_locuteurs(
     for g in groupe_mot:
         ordre.setdefault(g, f"SPEAKER_{len(ordre):02d}")
     code_mot = [ordre[g] for g in groupe_mot]
+    perso_du_code = {code: g - PERSONNAGE for g, code in ordre.items() if g >= PERSONNAGE}
 
     if decouper:
         segments[:] = _decouper(segments, mots, code_mot)
@@ -437,10 +528,11 @@ def identifier_locuteurs(
     for seg in segments:
         renumero.setdefault(seg["locuteur"], f"SPEAKER_{len(renumero):02d}")
         seg["locuteur"] = renumero[seg["locuteur"]]
-    locuteurs = {
-        code: {"nom": f"Locuteur {k + 1}", "couleur": COULEURS[k % len(COULEURS)]}
-        for k, code in enumerate(renumero.values())
-    }
+    locuteurs: dict[str, dict[str, Any]] = {}
+    for k, (ancien, code) in enumerate(renumero.items()):
+        locuteurs[code] = {"nom": f"Locuteur {k + 1}", "couleur": COULEURS[k % len(COULEURS)]}
+        if ancien in perso_du_code:
+            locuteurs[code]["personnage"] = perso_du_code[ancien]  # son visage : visages/perso_N.jpg
     logger.info("%d locuteur(s) identifié(s), %d répliques, %d phrases", len(locuteurs), len(repliques), len(segments))
     progression(1.0)
     return locuteurs
