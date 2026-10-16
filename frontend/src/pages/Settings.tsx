@@ -211,7 +211,7 @@ export function Settings() {
             className="mt-3 flex items-center justify-between rounded-xl border border-white/10 bg-white/[0.02] px-4 py-3 text-[14px] text-white transition-colors hover:border-violet-400/50"
           >
             <span className="flex items-center gap-2">
-              <Library className="size-4 text-violet-300" /> Bibliothèque de voix : 20 voix (femmes, hommes) + vos voix
+              <Library className="size-4 text-violet-300" /> Bibliothèque de voix : 51 voix (tous âges, variantes de style) + vos voix
             </span>
             <ArrowRight className="size-4" />
           </a>

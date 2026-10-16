@@ -323,6 +323,17 @@ export async function createJob(
 export type Sexe = 'femme' | 'homme'
 export type AgeVoix = 'enfant' | 'jeune' | 'adulte' | 'senior'
 
+/** Réglages de timbre d'un locuteur (absents = neutres). */
+export type Timbre = {
+  ton?: number
+  formant?: number
+  graves?: number
+  aigus?: number
+  espace?: number
+  telephone?: number
+  vibrato?: number
+}
+
 export type Locuteur = {
   code: string
   nom: string
@@ -331,6 +342,9 @@ export type Locuteur = {
   voix: string
   /** Voix utilisée lors de la dernière génération (absent si jamais générée) */
   voix_generee?: string
+  /** Réglages de timbre enregistrés, et ceux de la dernière génération */
+  timbre?: Timbre
+  timbre_genere?: Timbre
   f0_hz: number | null
   sexe_estime: Sexe | null
   registre: string | null
@@ -348,10 +362,18 @@ export type Voix = {
   registre: string | null
   f0_hz: number | null
   apercu: boolean
+  /** Variante de style (Grave, Claire, Radio…) */
+  style?: string
 }
 
 export const getSpeakers = (id: string) => request<Locuteur[]>(`/jobs/${id}/locuteurs`)
-export const updateSpeaker = (id: string, code: string, modif: { nom?: string; voix?: string }) =>
+/** Écoute immédiate d'un réglage de timbre sur la voix choisie du locuteur. */
+export function speakerTimbreUrl(id: string, code: string, timbre: Timbre): string {
+  const base = fichier(`/jobs/${id}/locuteurs/${code}/timbre`)
+  const params = new URLSearchParams(Object.entries(timbre).filter(([, v]) => v !== undefined).map(([k, v]) => [k, String(v)]))
+  return params.size ? `${base}${base.includes('?') ? '&' : '?'}${params}` : base
+}
+export const updateSpeaker = (id: string, code: string, modif: { nom?: string; voix?: string; timbre?: Timbre }) =>
   send<Locuteur[]>(`/jobs/${id}/locuteurs/${code}`, 'PUT', modif)
 export const mergeSpeakers = (id: string, source: string, cible: string) =>
   send<Locuteur[]>(`/jobs/${id}/locuteurs/fusion`, 'POST', { source, cible })

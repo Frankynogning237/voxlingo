@@ -736,6 +736,7 @@ def get_speakers(job_id: str) -> list[dict]:
 class ModifLocuteur(BaseModel):
     nom: str | None = None
     voix: str | None = None  # « clone » ou identifiant d'une voix de la bibliothèque
+    timbre: dict[str, float] | None = None  # réglages de timbre (voir voice_bank.TIMBRE_BORNES)
 
 
 @app.put("/jobs/{job_id}/locuteurs/{code}")
@@ -753,6 +754,8 @@ def update_speaker(job_id: str, code: str, modif: ModifLocuteur) -> list[dict]:
         if modif.voix != "clone" and voice_bank.trouver(modif.voix) is None:
             raise HTTPException(400, "Voix inconnue dans la bibliothèque.")
         fiche[code]["voix"] = modif.voix
+    if modif.timbre is not None:
+        fiche[code]["timbre"] = voice_bank.nettoyer_timbre(modif.timbre)
     data["locuteurs"] = fiche
     jobs.write_segments(job_id, data)
     return _fiche_locuteurs(data)
@@ -858,6 +861,41 @@ def speaker_original(job_id: str, code: str) -> FileResponse:
     if not chemin.is_file():
         chemin = jobs.project_dir(job_id) / "voix" / "reference.wav"
     return FileResponse(chemin, media_type="audio/wav")
+
+
+@app.get("/jobs/{job_id}/locuteurs/{code}/timbre")
+def speaker_timbre_preview(job_id: str, code: str, request: Request) -> FileResponse:
+    """Écoute immédiate d'un réglage de timbre : la voix choisie du locuteur (aperçu de la voix
+    de la bibliothèque, ou sa voix d'origine) passée par les filtres, sans resynthèse."""
+    import tempfile
+
+    from pipeline import voice_bank
+
+    _get_status_or_404(job_id)
+    data = jobs.read_segments(job_id)
+    infos = jobs.locuteurs(data).get(code)
+    if infos is None:
+        raise HTTPException(404, "Locuteur introuvable.")
+    choix = voice_bank.trouver(infos["voix"]) if infos["voix"] != "clone" else None
+    if choix is not None and voice_bank.fichier_apercu(choix["id"]).is_file():
+        source = voice_bank.fichier_apercu(choix["id"])
+    else:
+        speaker_original(job_id, code)  # crée l'échantillon d'origine si besoin
+        source = jobs.project_dir(job_id) / "voix" / f"reference_{code}.wav"
+        if not source.is_file():
+            source = jobs.project_dir(job_id) / "voix" / "reference.wav"
+    reglages = {}
+    for cle in voice_bank.TIMBRE_BORNES:
+        if cle in request.query_params:
+            try:
+                reglages[cle] = float(request.query_params[cle])
+            except ValueError:
+                raise HTTPException(400, f"Réglage invalide : {cle}.") from None
+    dossier = Path(tempfile.mkdtemp(prefix="voxlingo-timbre-"))
+    copie = dossier / "apercu.wav"
+    shutil.copy(source, copie)
+    voice_bank.transformer(copie, voice_bank.nettoyer_timbre(reglages))
+    return FileResponse(copie, media_type="audio/wav")
 
 
 @app.get("/jobs/{job_id}/locuteurs/{code}/doublee")

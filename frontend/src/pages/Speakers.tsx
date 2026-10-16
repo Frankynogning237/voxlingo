@@ -20,6 +20,8 @@ import { useEffect, useRef, useState } from 'react'
 import { Panel } from '@/components/Controls'
 import { Gradient, PageHeader } from '@/components/Layout'
 import { MiniPlayer } from '@/components/MiniPlayer'
+import { ReglagesTimbre } from '@/components/ReglagesTimbre'
+import { memeTimbre } from '@/lib/timbre'
 import { OutlineButton, PrimaryButton } from '@/components/PrimaryButton'
 import {
   LIBELLES_AGE,
@@ -36,6 +38,7 @@ import {
   voicePreviewUrl,
   type Job,
   type Locuteur,
+  type Timbre,
   type Voix,
 } from '@/lib/api'
 import { formatDuree, nomLangue } from '@/lib/format'
@@ -68,7 +71,7 @@ function Avatar({ jobId, loc }: { jobId: string; loc: Locuteur }) {
 }
 
 function libelleVoix(v: Voix) {
-  return `${v.nom} · ${v.sexe === 'femme' ? 'femme' : 'homme'} · ${LIBELLES_AGE[v.age].toLowerCase()}${v.registre ? ` · ${v.registre}` : ''}`
+  return `${v.nom} · ${v.sexe === 'femme' ? 'femme' : 'homme'} · ${LIBELLES_AGE[v.age].toLowerCase()}${v.registre ? ` · ${v.registre}` : ''}${v.style ? ` · style ${v.style.toLowerCase()}` : ''}`
 }
 
 function ChoixVoix({
@@ -83,8 +86,9 @@ function ChoixVoix({
   disabled: boolean
 }) {
   const groupes: [string, Voix[]][] = [
-    ['Voix de femmes', voix.filter((v) => v.source === 'xtts' && v.sexe === 'femme')],
-    ["Voix d'hommes", voix.filter((v) => v.source === 'xtts' && v.sexe === 'homme')],
+    ['Voix de femmes', voix.filter((v) => v.source === 'xtts' && v.sexe === 'femme' && !v.style)],
+    ["Voix d'hommes", voix.filter((v) => v.source === 'xtts' && v.sexe === 'homme' && !v.style)],
+    ['Variantes de style', voix.filter((v) => v.source === 'xtts' && v.style)],
     ['Mes voix', voix.filter((v) => v.source === 'perso')],
   ]
   const conseil = loc.sexe_estime ? ` (voix d'origine : ${loc.sexe_estime}${loc.registre ? `, ${loc.registre}` : ''})` : ''
@@ -126,6 +130,7 @@ function CarteLocuteur({
   occupe,
   onRenommer,
   onVoix,
+  onTimbre,
   onFusion,
 }: {
   job: Job
@@ -136,6 +141,7 @@ function CarteLocuteur({
   occupe: boolean
   onRenommer: (nom: string) => void
   onVoix: (v: string) => void
+  onTimbre: (t: Timbre) => void
   onFusion: (cible: string) => void
 }) {
   const champ = useRef<HTMLInputElement>(null)
@@ -143,7 +149,7 @@ function CarteLocuteur({
   const [fusion, setFusion] = useState(false)
   useEffect(() => setNom(loc.nom), [loc.nom])
   const choisie = voix.find((v) => v.id === loc.voix)
-  const aJour = !!loc.voix_generee && loc.voix_generee === loc.voix
+  const aJour = !!loc.voix_generee && loc.voix_generee === loc.voix && memeTimbre(loc.timbre, loc.timbre_genere)
   // Voix doublée à jour : la phrase générée ; sinon, l'aperçu de la voix choisie dans la bibliothèque
   const srcDoublee = aJour
     ? speakerAudioUrl(job.id, loc.code, 'doublee')
@@ -187,6 +193,17 @@ function CarteLocuteur({
           />
           <div className="lg:col-span-2">
             <ChoixVoix loc={loc} voix={voix} onChange={onVoix} disabled={occupe} />
+            <div className="mt-3">
+              <ReglagesTimbre
+                key={JSON.stringify(loc.timbre ?? {})}
+                jobId={job.id}
+                code={loc.code}
+                enregistre={loc.timbre}
+                genere={loc.timbre_genere}
+                disabled={occupe}
+                onAppliquer={onTimbre}
+              />
+            </div>
             {!aJour && (
               <p className="mt-2 flex items-center gap-2 text-[13px] text-warning">
                 <Sparkles className="size-4" /> Voix pas encore générée : cliquez sur « Générer les voix » en bas de page.
@@ -263,7 +280,7 @@ export function Speakers({ id }: { id: string }) {
   }
   const erreur = (e: unknown) => setMessage((e as Error).message)
   const modifier = useMutation({
-    mutationFn: ({ code, modif }: { code: string; modif: { nom?: string; voix?: string } }) => updateSpeaker(id, code, modif),
+    mutationFn: ({ code, modif }: { code: string; modif: { nom?: string; voix?: string; timbre?: Timbre } }) => updateSpeaker(id, code, modif),
     onSuccess: appliquer,
     onError: erreur,
   })
@@ -330,6 +347,7 @@ export function Speakers({ id }: { id: string }) {
               occupe={occupe}
               onRenommer={(nom) => modifier.mutate({ code: loc.code, modif: { nom } })}
               onVoix={(v) => modifier.mutate({ code: loc.code, modif: { voix: v } })}
+              onTimbre={(timbre) => modifier.mutate({ code: loc.code, modif: { timbre } })}
               onFusion={(cible) => fusionner.mutate({ source: loc.code, cible })}
             />
           ))}

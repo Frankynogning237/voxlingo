@@ -323,6 +323,12 @@ def run_translation(job_id: str, ids: set[int] | None = None) -> None:
 REFERENCE_MIN_LOCUTEUR_S = 3.0  # en dessous, la voix d'un locuteur est trop peu entendue pour la cloner
 
 
+def _timbre_du_locuteur(infos: dict) -> dict:
+    from pipeline.voice_bank import nettoyer_timbre
+
+    return nettoyer_timbre(infos.get("timbre"))
+
+
 def voix_des_locuteurs(job_id: str, data: dict) -> dict[str, str]:
     """Voix de chaque locuteur : sa voix d'origine clonée, ou celle choisie dans la bibliothèque."""
     from pipeline import voice_bank
@@ -350,11 +356,15 @@ def voix_des_locuteurs(job_id: str, data: dict) -> dict[str, str]:
         if choix is not None:
             prises.add(choix["id"])
             resultat[code] = voice_bank.spec(choix)
-            continue
-        reference = dossier / f"reference_{code}.wav"
-        if not reference.is_file():
-            extraire_reference(source, phrases, reference)
-        resultat[code] = f"ref:{reference}"
+        else:
+            reference = dossier / f"reference_{code}.wav"
+            if not reference.is_file():
+                extraire_reference(source, phrases, reference)
+            resultat[code] = f"ref:{reference}"
+        # Réglages de timbre du locuteur (page Locuteurs), appliqués après la synthèse
+        timbre = voice_bank.nettoyer_timbre(infos.get("timbre"))
+        if timbre:
+            resultat[code] = "|".join([resultat[code], *(f"{k}={v}" for k, v in sorted(timbre.items()))])
     return resultat
 
 
@@ -380,6 +390,7 @@ def _do_voices(job_id: str, report: Callable[[float], None]) -> None:
     fiche = jobs.locuteurs(data)
     for infos in fiche.values():
         infos["voix_generee"] = infos["voix"]
+        infos["timbre_genere"] = _timbre_du_locuteur(infos)
     data["locuteurs"] = fiche
     jobs.write_segments(job_id, data)
     jobs.update_status(job_id, voix_generees=generees)

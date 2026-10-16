@@ -1,4 +1,4 @@
-// Bibliothèque de voix : 20 voix intégrées à XTTS v2 et voix personnelles, par sexe et âge.
+// Bibliothèque de voix : 51 voix (XTTS v2, tous âges, variantes de style) et voix personnelles.
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { AnimatePresence, motion } from 'framer-motion'
 import { Loader2, Mic, Plus, Sparkles, Trash2, Upload, X } from 'lucide-react'
@@ -62,6 +62,11 @@ function CarteVoix({ voix }: { voix: Voix }) {
               {voix.f0_hz ? ` · ${Math.round(voix.f0_hz)} Hz` : ''}
               {voix.source === 'perso' ? ' · voix personnelle' : ''}
             </p>
+            {voix.style && (
+              <span className="mt-1 inline-block rounded-full border border-violet-400/40 bg-violet-500/10 px-2.5 py-0.5 text-[12px] text-violet-200">
+                Style {voix.style.toLowerCase()}
+              </span>
+            )}
           </div>
           {voix.source === 'perso' && (
             <button type="button" onClick={() => supprimer.mutate()} aria-label="Supprimer cette voix" className="text-white/60 hover:text-destructive">

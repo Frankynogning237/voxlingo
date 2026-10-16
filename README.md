@@ -121,14 +121,20 @@ Chaque locuteur reçoit ensuite **sa propre voix** : la sienne clonée, ou, s'il
 La page **Locuteurs** permet de renommer, fusionner, corriger le locuteur d'une phrase et choisir la voix :
 
 - **voix d'origine clonée** (par défaut) ;
-- **voix de la bibliothèque** : 20 voix (4 enfants, 4 jeunes, 8 adultes, 4 seniors, femmes et hommes) ;
+- **voix de la bibliothèque** : 51 voix (6 enfants, 7 jeunes, 32 adultes, 6 seniors, femmes et hommes), dont
+  6 variantes de style (grave, claire, chaude, douce, radio, téléphone) ;
   « Attribuer automatiquement » donne à chaque personne une voix différente, du même sexe et du registre le plus proche ;
 - **vos propres voix** : un enregistrement de 6 à 15 s ajouté dans la Bibliothèque (Paramètres → Bibliothèque de voix).
 
 > Les voix d'enfants, de jeunes et de seniors sont obtenues en transformant des voix d'adultes XTTS (hauteur,
 > résonances, tempo, léger tremblement). Pour un rendu parfaitement naturel, ajoutez un vrai enregistrement.
 
-Après un changement de voix, cliquez sur **Générer les voix** : seules les phrases concernées sont refaites.
+**Timbre de la voix** (page Locuteurs, sous le choix de la voix) : 13 variantes en un clic (plus grave, plus aiguë,
+chaleureuse, claire, douce, radio, robuste, menue, enfantine, âgée, dans une pièce, téléphone) et des réglages fins :
+hauteur (demi-tons), timbre (résonances, sombre ↔ clair, sans changer la hauteur), graves, aigus, espace,
+tremblement, effet téléphone. « Écouter ce réglage » le fait entendre aussitôt sur la voix choisie.
+
+Après un changement de voix ou de timbre, cliquez sur **Générer les voix** : seules les phrases concernées sont refaites.
 Une seule génération de voix tourne à la fois (8 Go de RAM ne suffisent pas pour deux) : les suivantes attendent leur tour.
 
 ## Ton des phrases

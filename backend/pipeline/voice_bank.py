@@ -1,4 +1,4 @@
-"""Bibliothèque de voix : 20 voix de tous âges et les voix personnelles de l'utilisateur.
+"""Bibliothèque de voix : 51 voix de tous âges et styles, et les voix personnelles de l'utilisateur.
 
 Chaque voix porte un sexe, un âge (enfant, jeune, adulte, senior) et un registre (grave,
 médium, aigu) mesuré sur son aperçu (fréquence fondamentale médiane). L'âge se corrige
@@ -66,8 +66,54 @@ VOIX_BIBLIOTHEQUE: list[dict[str, Any]] = [
      "pitch": 0.92, "tempo": 0.9, "vibrato": 0.14},
     {"id": "albert", "nom": "Papi Albert", "sexe": "homme", "age": "senior", "base": "Gilberto Mathias",
      "pitch": 0.92, "tempo": 0.9, "vibrato": 0.14},
+    # ── Version 3 : 25 nouvelles voix de base ──
+    # Hommes adultes (hauteur mesurée : 88 à 115 Hz)
+    {"id": "bruno", "nom": "Bruno", "sexe": "homme", "age": "adulte", "base": "Dionisio Schuyler"},
+    {"id": "gaspard", "nom": "Gaspard", "sexe": "homme", "age": "adulte", "base": "Baldur Sanjin"},
+    {"id": "thomas", "nom": "Thomas", "sexe": "homme", "age": "adulte", "base": "Damjan Chapman"},
+    {"id": "louis", "nom": "Louis", "sexe": "homme", "age": "adulte", "base": "Ludvig Milivoj"},
+    {"id": "samuel", "nom": "Samuel", "sexe": "homme", "age": "adulte", "base": "Aaron Dreschner"},
+    {"id": "antoine", "nom": "Antoine", "sexe": "homme", "age": "adulte", "base": "Marcos Rudaski"},
+    # Femmes adultes (sexe vérifié par la mesure à la création de l'aperçu)
+    {"id": "emilie", "nom": "Émilie", "sexe": "femme", "age": "adulte", "base": "Gitta Nikolina"},
+    {"id": "laura", "nom": "Laura", "sexe": "femme", "age": "adulte", "base": "Tammy Grit"},
+    {"id": "amina", "nom": "Amina", "sexe": "femme", "age": "adulte", "base": "Vjollca Johnnie"},
+    {"id": "camille", "nom": "Camille", "sexe": "femme", "age": "adulte", "base": "Nova Hogarth"},
+    {"id": "fatou", "nom": "Fatou", "sexe": "femme", "age": "adulte", "base": "Uta Obando"},
+    {"id": "helene", "nom": "Hélène", "sexe": "femme", "age": "adulte", "base": "Lidiya Szekeres"},
+    {"id": "julie", "nom": "Julie", "sexe": "femme", "age": "adulte", "base": "Chandra MacFarland"},
+    {"id": "manon", "nom": "Manon", "sexe": "femme", "age": "adulte", "base": "Szofi Granger"},
+    {"id": "elise", "nom": "Élise", "sexe": "femme", "age": "adulte", "base": "Camilla Holmström"},
+    {"id": "aicha", "nom": "Aïcha", "sexe": "femme", "age": "adulte", "base": "Narelle Moon"},
+    {"id": "sarah", "nom": "Sarah", "sexe": "femme", "age": "adulte", "base": "Barbora MacLean"},
+    {"id": "lucia", "nom": "Lucia", "sexe": "femme", "age": "adulte", "base": "Alma María"},
+    # Jeunes
+    {"id": "jade", "nom": "Jade", "sexe": "femme", "age": "jeune", "base": "Maja Ruoho", "pitch": 1.06, "tempo": 1.04},
+    {"id": "lea", "nom": "Léa", "sexe": "femme", "age": "jeune", "base": "Zofija Kendrick", "pitch": 1.06, "tempo": 1.04},
+    {"id": "lucas", "nom": "Lucas", "sexe": "homme", "age": "jeune", "base": "Adde Michal", "pitch": 1.06, "tempo": 1.04},
+    # Enfants
+    {"id": "mila", "nom": "Mila", "sexe": "femme", "age": "enfant", "base": "Lilya Stainthorpe", "pitch": 1.4},
+    {"id": "noah", "nom": "Noah", "sexe": "homme", "age": "enfant", "base": "Alexandra Hisakawa", "pitch": 1.3},
+    # Seniors
+    {"id": "odette", "nom": "Mamie Odette", "sexe": "femme", "age": "senior", "base": "Rosemary Okafor",
+     "pitch": 0.94, "tempo": 0.92, "vibrato": 0.12},
+    {"id": "henri", "nom": "Papi Henri", "sexe": "homme", "age": "senior", "base": "Viktor Menelaos",
+     "pitch": 0.92, "tempo": 0.9, "vibrato": 0.14},
+    # ── Variantes de style : une voix de base passée par des réglages de timbre ──
+    {"id": "marc-grave", "nom": "Marc · grave", "sexe": "homme", "age": "adulte", "base": "Damien Black",
+     "style": "Grave", "timbre": {"ton": -2, "formant": 0.93, "graves": 3}},
+    {"id": "claire-claire", "nom": "Claire · lumineuse", "sexe": "femme", "age": "adulte", "base": "Claribel Dervla",
+     "style": "Claire", "timbre": {"aigus": 4, "formant": 1.05}},
+    {"id": "julien-chaud", "nom": "Julien · chaleureux", "sexe": "homme", "age": "adulte", "base": "Luis Moray",
+     "style": "Chaude", "timbre": {"graves": 4, "aigus": -2}},
+    {"id": "sophie-douce", "nom": "Sophie · douce", "sexe": "femme", "age": "adulte", "base": "Annmarie Nele",
+     "style": "Douce", "timbre": {"aigus": -4, "ton": -1}},
+    {"id": "victor-radio", "nom": "Victor · radio", "sexe": "homme", "age": "adulte", "base": "Torcull Diarmuid",
+     "style": "Radio", "timbre": {"graves": 3, "aigus": 3}},
+    {"id": "nadia-tel", "nom": "Nadia · téléphone", "sexe": "femme", "age": "adulte", "base": "Asya Anara",
+     "style": "Téléphone", "timbre": {"telephone": 1}},
 ]
-VERSION_BIBLIOTHEQUE = 2
+VERSION_BIBLIOTHEQUE = 3
 
 TEXTE_APERCU = "Bonjour, voici un aperçu de ma voix pour vos doublages. J'espère qu'elle vous plaira !"
 SEUIL_SEXE_HZ = 165  # en dessous : voix plutôt masculine
@@ -90,7 +136,8 @@ def _initiale() -> list[dict[str, Any]]:
     return [
         {
             "id": v["id"], "nom": v["nom"], "source": "xtts", "xtts": v["base"],
-            "transformation": {k: v[k] for k in ("pitch", "tempo", "vibrato") if k in v},
+            "transformation": {**{k: v[k] for k in ("pitch", "tempo", "vibrato") if k in v}, **v.get("timbre", {})},
+            **({"style": v["style"]} if "style" in v else {}),
             "sexe": v["sexe"], "age": v["age"], "registre": None, "f0_hz": None,
             "version": VERSION_BIBLIOTHEQUE,
         }
@@ -103,11 +150,20 @@ def lire_banque() -> list[dict[str, Any]]:
         chemin = _fichier_banque()
         banque = json.loads(chemin.read_text(encoding="utf-8")) if chemin.is_file() else []
         if not any(v.get("version") == VERSION_BIBLIOTHEQUE for v in banque):
-            # Nouvelle version de la bibliothèque : on garde les voix personnelles, on remplace les autres
-            for ancienne in banque:
-                if ancienne["source"] == "xtts":
-                    fichier_apercu(ancienne["id"]).unlink(missing_ok=True)
-            banque = _initiale() + [v for v in banque if v["source"] == "perso"]
+            # Nouvelle version de la bibliothèque : on garde les voix personnelles, on remplace les autres.
+            # Une voix inchangée (même base, même transformation) garde son aperçu et ses mesures.
+            anciennes = {v["id"]: v for v in banque if v["source"] == "xtts"}
+            nouvelles = _initiale()
+            for voix in nouvelles:
+                ancienne = anciennes.pop(voix["id"], None)
+                if ancienne and ancienne.get("xtts") == voix["xtts"] \
+                        and ancienne.get("transformation") == voix["transformation"]:
+                    voix.update({k: ancienne[k] for k in ("f0_hz", "registre", "sexe", "age") if k in ancienne})
+                else:
+                    fichier_apercu(voix["id"]).unlink(missing_ok=True)
+            for ancienne in anciennes.values():
+                fichier_apercu(ancienne["id"]).unlink(missing_ok=True)
+            banque = nouvelles + [v for v in banque if v["source"] == "perso"]
             chemin.write_text(json.dumps(banque, ensure_ascii=False, indent=1), encoding="utf-8")
     for voix in banque:
         voix["apercu"] = fichier_apercu(voix["id"]).is_file()
@@ -142,8 +198,64 @@ def separer_spec(voix: str) -> tuple[str, dict[str, float]]:
     return base, {k: float(v) for k, _, v in (p.partition("=") for p in parametres)}
 
 
+# Réglages de timbre d'un locuteur (page Locuteurs), avec leurs bornes. Neutres par défaut.
+TIMBRE_BORNES: dict[str, tuple[float, float, float]] = {
+    # nom : (minimum, maximum, valeur neutre)
+    "ton": (-12.0, 12.0, 0.0),  # hauteur, en demi-tons (résonances conservées)
+    "formant": (0.8, 1.25, 1.0),  # résonances : < 1 voix plus sombre / « grande », > 1 plus claire / « menue »
+    "graves": (-12.0, 12.0, 0.0),  # dB autour de 150 Hz : chaleur, corps
+    "aigus": (-12.0, 12.0, 0.0),  # dB autour de 4 kHz : clarté, présence
+    "espace": (0.0, 1.0, 0.0),  # réverbération légère (pièce)
+    "telephone": (0.0, 1.0, 0.0),  # 1 : bande passante d'un téléphone
+    "vibrato": (0.0, 0.5, 0.0),  # tremblement (voix âgée, émotion)
+}
+
+
+def nettoyer_timbre(timbre: dict[str, float] | None) -> dict[str, float]:
+    """Garde les réglages connus, bornés, et différents de la valeur neutre."""
+    propre: dict[str, float] = {}
+    for cle, valeur in (timbre or {}).items():
+        if cle not in TIMBRE_BORNES or valeur is None:
+            continue
+        minimum, maximum, neutre = TIMBRE_BORNES[cle]
+        valeur = round(min(maximum, max(minimum, float(valeur))), 3)
+        if abs(valeur - neutre) > 1e-3:
+            propre[cle] = valeur
+    return propre
+
+
+def filtres_timbre(parametres: dict[str, float], taux: int = 24000) -> list[str]:
+    """Filtres FFmpeg des réglages de timbre (voir TIMBRE_BORNES)."""
+    filtres: list[str] = []
+    ton = parametres.get("ton", 0.0)
+    formant = parametres.get("formant", 1.0)
+    if ton or formant != 1.0:
+        hauteur = 2 ** (ton / 12)
+        if formant != 1.0:
+            # Décaler les résonances sans changer la hauteur : on accélère le son (tout monte, dont
+            # les résonances), puis Rubber Band ramène la hauteur et la durée en gardant les résonances.
+            filtres.append(f"asetrate={round(taux * formant)},aresample={taux}")
+            filtres.append(f"rubberband=pitch={hauteur / formant:.5f}:tempo={1 / formant:.5f}"
+                           ":formant=preserved:pitchq=quality")
+        else:
+            filtres.append(f"rubberband=pitch={hauteur:.5f}:formant=preserved:pitchq=quality")
+    if parametres.get("graves"):
+        filtres.append(f"bass=g={parametres['graves']}:f=150:w=0.8")
+    if parametres.get("aigus"):
+        filtres.append(f"treble=g={parametres['aigus']}:f=4000:w=0.8")
+    if parametres.get("telephone"):
+        filtres.append("highpass=f=300,lowpass=f=3400,acompressor=threshold=0.2:ratio=4")
+    if parametres.get("espace"):
+        e = parametres["espace"]
+        filtres.append(f"aecho=0.9:0.85:35|71|113:{0.35 * e:.3f}|{0.22 * e:.3f}|{0.12 * e:.3f}")
+    if filtres:
+        filtres.append("alimiter=limit=0.95")  # pas de saturation après un renforcement
+    return filtres
+
+
 def transformer(fichier: Path, parametres: dict[str, float]) -> None:
-    """Applique la transformation d'âge (hauteur, résonances, tempo, tremblement) à un WAV, sur place."""
+    """Applique la transformation d'âge (hauteur, résonances, tempo, tremblement) puis les
+    réglages de timbre du locuteur à un WAV, sur place."""
     import subprocess
 
     from pipeline.extract import FFmpegError, _require
@@ -157,6 +269,9 @@ def transformer(fichier: Path, parametres: dict[str, float]) -> None:
         filtres.append(f"rubberband=pitch={pitch}:tempo={tempo}:formant=shifted:pitchq=quality")
     if parametres.get("vibrato"):
         filtres.append(f"vibrato=f=5.5:d={parametres['vibrato']}")
+    filtres += filtres_timbre({k: v for k, v in parametres.items() if k != "vibrato"})
+    if not filtres:
+        return
     sortie = fichier.with_name(fichier.stem + "_age.wav")
     resultat = subprocess.run(
         [_require("ffmpeg"), "-y", "-v", "error", "-i", str(fichier), "-af", ",".join(filtres),
@@ -265,6 +380,13 @@ def generer_apercus() -> int:
     generer_voix(phrases, "fr", {n: spec(v) for n, v in enumerate(manquantes)}, dossier)
     for n, voix in enumerate(manquantes):
         fichier_brut(dossier, n).replace(fichier_apercu(voix["id"]))
+        if voix["age"] == "adulte" and not voix.get("transformation"):
+            # Le prénom d'une voix XTTS ne dit pas toujours son sexe : la hauteur mesurée tranche
+            mesure = mesurer_f0(fichier_apercu(voix["id"]))
+            if mesure is not None and sexe_estime(mesure) != voix["sexe"]:
+                logger.warning("Voix %s (%s) : %s Hz, classée %s au lieu de %s", voix["nom"], voix["xtts"],
+                               mesure, sexe_estime(mesure), voix["sexe"])
+                voix["sexe"] = sexe_estime(mesure)
         voix["f0_hz"] = mesurer_f0(fichier_apercu(voix["id"]), bornes=bornes_f0(voix["sexe"], voix["age"]))
         voix["registre"] = registre(voix["sexe"], voix["f0_hz"])
     (dossier / "manifeste.json").unlink(missing_ok=True)
