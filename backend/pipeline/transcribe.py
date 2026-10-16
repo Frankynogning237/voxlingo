@@ -66,6 +66,15 @@ def fusionner_fragments(segments: list[Segment]) -> list[Segment]:
     return fusion
 
 
+def _charger_16k(audio: Path):
+    """Signal mono 16 kHz (float32) attendu par Whisper."""
+    import librosa
+    import numpy as np
+
+    signal, _ = librosa.load(str(audio), sr=16000, mono=True)
+    return signal.astype(np.float32)
+
+
 def transcribe(audio: Path, on_progress: Callable[[float], None] | None = None) -> Transcription:
     """Transcrit l'audio et détecte sa langue. `on_progress` reçoit une valeur entre 0 et 1."""
     from faster_whisper import WhisperModel
@@ -80,8 +89,10 @@ def transcribe(audio: Path, on_progress: Callable[[float], None] | None = None) 
         download_root=str(get_settings().models_dir / "whisper"),
     )
     try:
+        # Le son est lu ici (WAV via soundfile) plutôt que par faster-whisper, qui passe par PyAV :
+        # certaines versions de PyAV (Kaggle) refusent son option « metadata_errors ».
         segments_iter, info = model.transcribe(
-            str(audio), vad_filter=True, beam_size=5, word_timestamps=True
+            _charger_16k(audio), vad_filter=True, beam_size=5, word_timestamps=True
         )
         logger.info("Langue détectée : %s (%.0f %%)", info.language, info.language_probability * 100)
 
