@@ -20,6 +20,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 
 import jobs
+import sauvegarde
 from config import get_runtime, get_settings
 from pipeline.extract import make_filmstrip
 from pipeline.segments import est_trop_long, marquer_fin_max
@@ -105,6 +106,11 @@ def startup() -> None:
                 status["id"], etat="erreur",
                 erreur="Traitement interrompu par l'arrêt du serveur.",
             )
+
+
+@app.on_event("shutdown")
+def shutdown() -> None:
+    sauvegarde.a_l_arret()  # Kaggle/Colab : dernière sauvegarde avant la fin de la séance
 
 
 # Formats lus par FFmpeg. Aucune limite de taille ni de durée : seul l'espace disque compte.
@@ -641,6 +647,7 @@ def delete_job(job_id: str) -> dict:
     if status["etat"] in ("en_attente", "en_cours"):
         raise HTTPException(409, "Annulez le traitement en cours avant de supprimer ce projet.")
     jobs.delete_job(job_id)
+    sauvegarde.apres_suppression(job_id)
     return {"supprime": job_id}
 
 
@@ -1034,6 +1041,7 @@ def generate_previews() -> dict:
         try:
             voice_bank.generer_apercus()
             _apercus["erreur"] = None
+            sauvegarde.apres_changement_voix()
         except Exception as exc:  # message lisible pour l'interface
             logger.exception("Aperçus des voix")
             _apercus["erreur"] = str(exc)
@@ -1071,7 +1079,9 @@ async def add_voice(
     with tempfile.TemporaryDirectory() as dossier:
         temporaire = Path(dossier) / f"echantillon{suffixe}"
         temporaire.write_bytes(await echantillon.read())
-        return voice_bank.ajouter_voix_perso(nom, sexe, age, temporaire)
+        voix = voice_bank.ajouter_voix_perso(nom, sexe, age, temporaire)
+    sauvegarde.apres_changement_voix()
+    return voix
 
 
 class ModifVoix(BaseModel):
@@ -1093,6 +1103,7 @@ def update_voice(voix_id: str, modif: ModifVoix) -> dict:
         voix[champ] = valeur.strip() if isinstance(valeur, str) and champ == "nom" else valeur
     voix["registre"] = voice_bank.registre(voix["sexe"], voix.get("f0_hz"))
     voice_bank.ecrire_banque(banque)
+    sauvegarde.apres_changement_voix()
     return voix
 
 
@@ -1105,6 +1116,7 @@ def delete_voice(voix_id: str) -> dict:
         voice_bank.supprimer_voix_perso(voix_id)
     except KeyError:
         raise HTTPException(400, "Seules les voix personnelles peuvent être supprimées.") from None
+    sauvegarde.apres_changement_voix()
     return {"supprime": voix_id}
 
 

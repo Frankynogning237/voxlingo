@@ -31,13 +31,17 @@ et le rend joignable par l'interface publiée sur Vercel grâce à un tunnel Clo
 2. Ajouter les secrets (*Kaggle : Add-ons → Secrets* ; *Colab : icône 🔑*) : `HF_TOKEN` (votre jeton Hugging Face,
    pour l'identification des locuteurs par pyannote) et `GITHUB_TOKEN` : un jeton GitHub en **lecture seule** sur le dépôt privé `voxlingo`
    (autoriser l'accès au carnet pour chacun).
-3. Optionnel : un secret `VOXLINGO_CLE` (votre mot de passe d'accès). Sinon une clé est tirée au hasard à chaque séance.
-4. Vérifier `ADRESSE_VERCEL` ci-dessous (votre interface en ligne).
+3. Recommandé : un secret `HF_TOKEN_ECRITURE` (jeton Hugging Face avec droit d'**écriture**) pour la
+   **sauvegarde automatique** : projets terminés et voix sont copiés dans votre dépôt privé
+   `votre-compte/voxlingo-sauvegarde` et remis en place à la séance suivante (voir le README).
+4. Optionnel : un secret `VOXLINGO_CLE` (votre mot de passe d'accès). Sinon une clé est tirée au hasard à chaque séance.
+5. Vérifier `ADRESSE_VERCEL` ci-dessous (votre interface en ligne).
 
 **À chaque séance** : *Run All* (≈ 10 min d'installation), puis ouvrir le lien affiché à la fin.
 Gardez cet onglet ouvert : la dernière cellule maintient la séance active.
 
-⚠️ Les fichiers disparaissent à la fin de la séance (12 h max sur Kaggle) : **téléchargez vos vidéos doublées**.
+⚠️ Les fichiers disparaissent à la fin de la séance (12 h max sur Kaggle). Avec `HF_TOKEN_ECRITURE`, chaque export
+terminé est sauvegardé sur Hugging Face ; sans lui, **téléchargez vos vidéos doublées**.
 XTTS v2 (licence CPML) et NLLB : usage **personnel et non commercial** uniquement ; ne clonez une voix qu'avec l'accord de la personne.
 """)
 
@@ -48,6 +52,7 @@ DEPOT = "Frankynogning237/voxlingo"
 BRANCHE = "main"
 MODELE_TRADUCTION = "qwen2.5:14b"  # modèle Ollama : le plus fin sur les dialogues (≈ 9 Go, le GPU T4 le fait tourner)
 NOM_UTILISATEUR = "Franky"
+DEPOT_SAUVEGARDE = ""  # dépôt dataset privé de sauvegarde ; vide = « votre-compte/voxlingo-sauvegarde »
 """)
 
 code("""
@@ -72,8 +77,9 @@ def secret(nom):
 
 
 def masquer(texte):
-    # Ne jamais afficher un jeton GitHub (adresse « x-access-token:… »)
-    return re.sub(r"x-access-token:[^@\s]+@", "x-access-token:***@", texte)
+    # Ne jamais afficher un jeton GitHub (adresse « x-access-token:… ») ni Hugging Face (« hf_… »)
+    texte = re.sub(r"x-access-token:[^@\s]+@", "x-access-token:***@", texte)
+    return re.sub(r"hf_[A-Za-z0-9]{6,}", "hf_***", texte)
 
 
 def run(commande):
@@ -152,6 +158,18 @@ env = os.environ | {
 }
 if HF := secret("HF_TOKEN"):
     env["HF_TOKEN"] = HF
+
+# Sauvegarde automatique : on remet en place projets et voix des séances précédentes (une fois par séance)
+if HF_ECRITURE := secret("HF_TOKEN_ECRITURE"):
+    env["HF_TOKEN_ECRITURE"] = HF_ECRITURE
+    if DEPOT_SAUVEGARDE:
+        env["HF_DEPOT_SAUVEGARDE"] = DEPOT_SAUVEGARDE
+    r = subprocess.run([sys.executable, "-m", "sauvegarde", "restaurer"], cwd=CODE / "backend", text=True,
+                       capture_output=True, env=env | {"HF_HUB_DISABLE_PROGRESS_BARS": "1"})
+    print("Sauvegarde :", masquer((r.stdout.strip() or r.stderr.strip()[-1000:]) or "aucune réponse"))
+else:
+    print("Sauvegarde automatique désactivée : ajoutez le secret HF_TOKEN_ECRITURE pour ne rien perdre.")
+
 journal = open("/tmp/voxlingo.log", "a")
 subprocess.run("pkill -f 'uvicorn main:app'", shell=True)  # relance : l'ancien moteur laisse la place
 time.sleep(2)
@@ -215,6 +233,20 @@ try:
         print(time.strftime("%H:%M"), "· moteur", etat, "·", derniere[-150:], flush=True)
 except KeyboardInterrupt:
     print("Suivi arrêté (le moteur reste lancé tant que la séance est ouverte).")
+""")
+
+code("""
+# ── 6. Facultatif : sauvegarder tout de suite avant de fermer ─────────────
+# (arrêtez d'abord la cellule 5 avec ■, puis lancez celle-ci)
+# Chaque export terminé est déjà sauvegardé automatiquement ; cette cellule recopie en plus tous les
+# projets terminés et la bibliothèque de voix (utile après avoir modifié des voix juste avant de partir).
+if env.get("HF_TOKEN_ECRITURE"):
+    r = subprocess.run([sys.executable, "-c", "import sauvegarde; sauvegarde.instance().tout_sauvegarder()"],
+                       cwd=CODE / "backend", text=True, capture_output=True,
+                       env=env | {"HF_HUB_DISABLE_PROGRESS_BARS": "1"})
+    print(masquer(r.stderr.strip()[-1500:]) or "Sauvegarde terminée.")
+else:
+    print("Pas de secret HF_TOKEN_ECRITURE : rien n'est sauvegardé.")
 """)
 
 carnet = {

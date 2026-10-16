@@ -13,6 +13,7 @@ import time
 from collections.abc import Callable
 
 import jobs
+import sauvegarde
 from pipeline.extract import compute_peaks, extract_audio, make_filmstrip, make_thumbnail, probe_duration
 from pipeline.transcribe import transcribe
 from pipeline.adjust import ajuster_segments
@@ -96,6 +97,8 @@ def _guarded(job_id: str, body: Callable[[], None], etat_final: str = "a_valider
         body()
         jobs.update_status(job_id, etat=etat_final, etape=None, fin_traitement=jobs._now())
         logger.info("[%s] Terminé (%s)", job_id, etat_final)
+        if etat_final == "termine":
+            sauvegarde.apres_export(job_id)  # Kaggle/Colab : copie sur Hugging Face si un jeton est fourni
     except jobs.JobCancelled as exc:
         logger.info("[%s] Annulé", job_id)
         jobs.update_status(job_id, etat="annule", etape=None, erreur=str(exc), fin_traitement=jobs._now())

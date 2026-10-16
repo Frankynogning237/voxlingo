@@ -76,6 +76,10 @@ class Settings(BaseSettings):
 
     # Jeton Hugging Face (phase 6), uniquement dans .env
     hf_token: str | None = None
+    # Sauvegarde automatique sur Hugging Face (moteur sur Kaggle/Colab) : jeton avec droit
+    # d'écriture et dépôt dataset privé (par défaut « votre-compte/voxlingo-sauvegarde »)
+    hf_token_ecriture: str | None = None
+    hf_depot_sauvegarde: str | None = None
 
     # Accès à distance (moteur sur Kaggle/Colab, interface sur Vercel).
     # Clé d'accès : si elle est définie, chaque requête doit la fournir.

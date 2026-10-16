@@ -168,6 +168,7 @@ gratuit de Kaggle (≈ 30 h/semaine) ou de Colab, joignable grâce à un tunnel 
 1. kaggle.com → *Create → New Notebook → File → Import Notebook* → `kaggle/moteur_voxlingo.ipynb` ;
 2. une seule fois : vérifier son téléphone (*Settings* du compte), puis dans le carnet *GPU T4 x2*, *Internet On*,
    et le secret `GITHUB_TOKEN` (jeton GitHub *fine-grained*, lecture seule du contenu de `voxlingo`) ;
+   conseillé : le secret `HF_TOKEN_ECRITURE` pour la sauvegarde automatique (voir plus bas) ;
 3. renseigner `ADRESSE_VERCEL` dans la première cellule → *Run All* (≈ 10 min) ;
 4. ouvrir le lien affiché : l'interface Vercel se connecte toute seule au moteur (adresse et clé mémorisées).
 
@@ -177,7 +178,32 @@ Les vidéos partent en morceaux de 50 Mo (le tunnel refuse les envois de plus de
 Le voyant d'état en haut à droite ouvre la fenêtre **Connexion au moteur** (bouton *Moteur de ce PC* pour revenir).
 
 À savoir : l'adresse du moteur change à chaque séance, et les fichiers de Kaggle/Colab sont effacés à la fin
-(12 h max) — téléchargez vos vidéos doublées avant. XTTS v2 (CPML) et NLLB : usage personnel non commercial.
+(12 h max). Sans sauvegarde automatique (ci-dessous), téléchargez vos vidéos doublées avant.
+XTTS v2 (CPML) et NLLB : usage personnel non commercial.
+
+**Sauvegarde automatique sur Hugging Face (recommandé)**
+
+Pour ne rien perdre d'une séance à l'autre, le moteur recopie ses données dans un dépôt **privé** Hugging Face :
+les projets terminés (vidéo doublée, `segments.json`, `status.json`, voix, sous-titres…) et la bibliothèque
+de voix (aperçus des 51 voix, voix personnelles). La copie se fait après chaque export terminé, quand la
+bibliothèque de voix change, et à l'arrêt du moteur ; au début de la séance suivante, le carnet remet tout en
+place avant de démarrer le moteur (module `backend/sauvegarde.py`).
+
+1. **Jeton d'écriture** (une seule fois) : huggingface.co → photo de profil → *Settings → Access Tokens* →
+   *Create new token* → onglet **Write** → nom : `voxlingo-sauvegarde` → *Create token* → copier le jeton
+   (`hf_…`, il ne s'affiche qu'une fois). Le jeton `HF_TOKEN` actuel (lecture seule, pour pyannote) ne suffit
+   pas et reste inchangé.
+2. **Secret du carnet** : *Kaggle : Add-ons → Secrets* (*Colab : icône 🔑*) → nouveau secret `HF_TOKEN_ECRITURE`
+   avec ce jeton, accès autorisé au carnet.
+3. **Dépôt privé** : rien à faire, il est créé automatiquement (privé, de type *dataset*) au premier usage :
+   `votre-compte/voxlingo-sauvegarde`. Pour le créer vous-même ou choisir un autre nom : huggingface.co →
+   *New → Dataset* → nom → **Private** → *Create dataset*, puis renseigner `DEPOT_SAUVEGARDE = "compte/nom"`
+   dans la première cellule du carnet. Il est visible sur `https://huggingface.co/datasets/votre-compte/voxlingo-sauvegarde`.
+
+Bon à savoir : un projet supprimé dans l'interface l'est aussi de la sauvegarde ; les paquets Kaggle (`.zip`)
+ne sont pas copiés ; la dernière cellule (facultative) du carnet force une sauvegarde complète avant de
+fermer. Le jeton n'est jamais affiché dans le carnet ni dans les journaux. En local, la sauvegarde reste
+désactivée tant que `HF_TOKEN_ECRITURE` n'est pas défini dans `.env`.
 
 ## Tests
 
