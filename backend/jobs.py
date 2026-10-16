@@ -205,8 +205,10 @@ def duplicate_job(job_id: str) -> dict[str, Any]:
     dossier = project_dir(nouveau)
     dossier.mkdir(parents=True)
     shutil.copy2(project_dir(job_id) / source["fichier"], dossier / source["fichier"])
-    status = create_job(nouveau, source["nom_fichier"], source["fichier"], source["langue_cible"],
-                        dict(source.get("options") or {}))
+    options = dict(source.get("options") or {})
+    if source.get("decoupe_appliquee"):
+        options.pop("decoupe", None)  # la vidéo copiée est déjà raccourcie
+    status = create_job(nouveau, source["nom_fichier"], source["fichier"], source["langue_cible"], options)
     start_job(nouveau)
     return status
 

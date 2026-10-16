@@ -191,6 +191,18 @@ def run_pipeline(job_id: str) -> None:
     jobs.update_status(job_id, progression=0)
 
     def do_extract(report: Callable[[float], None]) -> None:
+        nonlocal video
+        decoupe = (status.get("options") or {}).get("decoupe")
+        if decoupe and not jobs.read_status(job_id).get("decoupe_appliquee"):
+            # Option « Raccourcir la vidéo » : la suite du traitement ne voit que le passage gardé
+            from pipeline.extract import couper_video
+
+            coupee = couper_video(video, folder / "input_coupee.mp4", decoupe["debut_s"], decoupe["fin_s"])
+            video.unlink()
+            video = coupee.replace(folder / "input.mp4")
+            jobs.update_status(job_id, fichier=video.name, decoupe_appliquee=True)
+            logger.info("[%s] Vidéo raccourcie : %.1f s → %.1f s", job_id, decoupe["debut_s"], decoupe["fin_s"])
+            report(0.2)
         duree = probe_duration(video)
         jobs.update_status(job_id, duree_s=round(duree, 2))
         make_thumbnail(video, folder / "thumbnail.jpg", duree)

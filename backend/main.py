@@ -186,6 +186,8 @@ async def create_job(
     ajuster_trop_longs: bool = Form(True),
     strategie_duree: Literal["reformuler", "accelerer"] = Form("reformuler"),
     voix_bibliotheque: bool = Form(False),
+    debut_s: float | None = Form(None, ge=0),
+    fin_s: float | None = Form(None, gt=0),
 ) -> dict:
     """Reçoit une vidéo et la langue cible, enregistre le projet et lance le pipeline."""
     # La vidéo arrive dans la requête (`video`) ou a déjà été envoyée par morceaux (`televersement`)
@@ -197,6 +199,8 @@ async def create_job(
         raise HTTPException(
             400, "Format non pris en charge : utilisez MP4, MOV, MKV, WEBM, AVI, M4V, WMV, FLV, TS ou MPG."
         )
+    if debut_s is not None and fin_s is not None and fin_s - debut_s < 1:
+        raise HTTPException(400, "Le passage à garder doit durer au moins 1 seconde.")
     if langue_cible not in get_settings().target_languages:
         raise HTTPException(400, f"Langue cible non prise en charge : {langue_cible}.")
 
@@ -228,6 +232,17 @@ async def create_job(
         "strategie_duree": strategie_duree,
         "voix_bibliotheque": voix_bibliotheque,
     }
+    if debut_s is not None or fin_s is not None:
+        # Raccourcir la vidéo : seul ce passage sera traité (coupe faite au début du traitement)
+        from pipeline.extract import probe_duration
+
+        duree = probe_duration(destination)
+        debut, fin = max(0.0, debut_s or 0.0), min(duree, fin_s if fin_s is not None else duree)
+        if fin - debut < 1:
+            shutil.rmtree(folder, ignore_errors=True)
+            raise HTTPException(400, "Le passage à garder doit durer au moins 1 seconde.")
+        if debut > 0.05 or fin < duree - 0.05:
+            options["decoupe"] = {"debut_s": round(debut, 2), "fin_s": round(fin, 2)}
     status = jobs.create_job(job_id, nom, destination.name, langue_cible, options)
     jobs.start_job(job_id)
     return status

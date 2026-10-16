@@ -145,7 +145,122 @@ function DropZone({ onFile, refus }: { onFile: (file: File) => void; refus: bool
   )
 }
 
-function VideoPreview({ file, onRemove }: { file: File; onRemove: () => void }) {
+type Decoupe = { debut: number; fin: number }
+
+/** Curseur à deux poignées : début et fin du passage gardé. */
+function DoubleCurseur({ duree, valeur, onChange }: { duree: number; valeur: Decoupe; onChange: (d: Decoupe) => void }) {
+  const pas = duree > 600 ? 1 : 0.1
+  const poignee =
+    'pointer-events-none absolute inset-0 h-6 w-full appearance-none bg-transparent [&::-webkit-slider-thumb]:pointer-events-auto [&::-webkit-slider-thumb]:size-4 [&::-webkit-slider-thumb]:cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-white [&::-webkit-slider-thumb]:bg-violet-500 [&::-moz-range-thumb]:pointer-events-auto [&::-moz-range-thumb]:size-4 [&::-moz-range-thumb]:cursor-pointer [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-2 [&::-moz-range-thumb]:border-white [&::-moz-range-thumb]:bg-violet-500'
+  return (
+    <div className="relative h-6">
+      <div className="absolute top-1/2 h-1.5 w-full -translate-y-1/2 rounded-full bg-white/12" />
+      <div
+        className="absolute top-1/2 h-1.5 -translate-y-1/2 rounded-full bg-linear-to-r from-violet-500 to-cyan-400"
+        style={{ left: `${(valeur.debut / duree) * 100}%`, right: `${100 - (valeur.fin / duree) * 100}%` }}
+      />
+      <input
+        type="range"
+        aria-label="Début du passage gardé"
+        min={0}
+        max={duree}
+        step={pas}
+        value={valeur.debut}
+        onChange={(e) => onChange({ ...valeur, debut: Math.min(Number(e.target.value), valeur.fin - 1) })}
+        className={poignee}
+      />
+      <input
+        type="range"
+        aria-label="Fin du passage gardé"
+        min={0}
+        max={duree}
+        step={pas}
+        value={valeur.fin}
+        onChange={(e) => onChange({ ...valeur, fin: Math.max(Number(e.target.value), valeur.debut + 1) })}
+        className={poignee}
+      />
+    </div>
+  )
+}
+
+/**
+ * Option « Raccourcir la vidéo » : seul le passage choisi sera doublé (la coupe est faite par
+ * le moteur au début du traitement, à l'image près).
+ */
+function Raccourcir({
+  duree,
+  decoupe,
+  onChange,
+  position,
+  aller,
+}: {
+  duree: number
+  decoupe: Decoupe | null
+  onChange: (d: Decoupe | null) => void
+  /** Position de lecture de l'aperçu, et déplacement de cette position */
+  position: () => number
+  aller: (t: number) => void
+}) {
+  if (!decoupe) {
+    return (
+      <button
+        type="button"
+        onClick={() => onChange({ debut: 0, fin: duree })}
+        className="flex h-10 items-center justify-center gap-2 rounded-xl border border-white/12 text-[15px] text-white/90 transition-colors hover:border-white/30"
+      >
+        <Scissors className="size-4" /> Raccourcir la vidéo
+      </button>
+    )
+  }
+  const bouton = 'rounded-lg border border-white/12 px-2.5 py-1 text-[13px] text-white/85 transition-colors hover:border-white/30'
+  return (
+    <div className="flex flex-col gap-2 rounded-xl border border-violet-500/40 bg-violet-500/[0.06] p-3">
+      <div className="flex items-center justify-between text-[14px]">
+        <span className="flex items-center gap-2 text-white">
+          <Scissors className="size-4 text-violet-300" /> Passage gardé : {formatDuree(decoupe.fin - decoupe.debut)}
+        </span>
+        <button type="button" onClick={() => onChange(null)} className="text-white/60 hover:text-white">
+          Garder toute la vidéo
+        </button>
+      </div>
+      <DoubleCurseur
+        duree={duree}
+        valeur={decoupe}
+        onChange={(d) => {
+          // L'aperçu se place sur la poignée déplacée
+          aller(d.debut !== decoupe.debut ? d.debut : d.fin)
+          onChange(d)
+        }}
+      />
+      <div className="flex items-center justify-between text-[13px] text-white/75">
+        <span className="flex items-center gap-2">
+          {formatDuree(decoupe.debut)}
+          <button type="button" className={bouton} onClick={() => onChange({ ...decoupe, debut: Math.min(position(), decoupe.fin - 1) })}>
+            Début ici
+          </button>
+        </span>
+        <span className="flex items-center gap-2">
+          <button type="button" className={bouton} onClick={() => onChange({ ...decoupe, fin: Math.max(position(), decoupe.debut + 1) })}>
+            Fin ici
+          </button>
+          {formatDuree(decoupe.fin)}
+        </span>
+      </div>
+    </div>
+  )
+}
+
+function VideoPreview({
+  file,
+  onRemove,
+  decoupe,
+  onDecoupe,
+}: {
+  file: File
+  onRemove: () => void
+  decoupe: Decoupe | null
+  onDecoupe: (d: Decoupe | null) => void
+}) {
   const [url, setUrl] = useState<string>()
   const [duree, setDuree] = useState<number | null>(null)
   const [lecture, setLecture] = useState(false)
@@ -179,6 +294,14 @@ function VideoPreview({ file, onRemove }: { file: File; onRemove: () => void }) 
               setDuree(e.currentTarget.duration)
               e.currentTarget.currentTime = Math.min(1, e.currentTarget.duration / 3)
             }}
+            onTimeUpdate={(e) => {
+              // Avec « Raccourcir la vidéo », la lecture reste dans le passage gardé
+              const v = e.currentTarget
+              if (decoupe && !v.paused && (v.currentTime >= decoupe.fin || v.currentTime < decoupe.debut - 0.5)) {
+                v.currentTime = decoupe.debut
+                if (v.currentTime >= decoupe.fin) v.pause()
+              }
+            }}
           />
           {!lecture && (
             <button
@@ -200,13 +323,31 @@ function VideoPreview({ file, onRemove }: { file: File; onRemove: () => void }) 
           </motion.p>
           <motion.div variants={badgeVariants} className="mt-3 flex gap-10 text-[16px] text-white/85">
             <span className="flex items-center gap-2.5">
-              <Clock3 className="size-5" /> {formatDuree(duree)}
+              <Clock3 className="size-5" />{' '}
+              {decoupe ? (
+                <>
+                  {formatDuree(decoupe.fin - decoupe.debut)} <span className="text-white/50">sur {formatDuree(duree)}</span>
+                </>
+              ) : (
+                formatDuree(duree)
+              )}
             </span>
             <span className="flex items-center gap-2.5">
               <Database className="size-5" /> {formatTaille(file.size)}
             </span>
           </motion.div>
         </motion.div>
+        {duree != null && Number.isFinite(duree) && duree > 2 && (
+          <Raccourcir
+            duree={duree}
+            decoupe={decoupe}
+            onChange={onDecoupe}
+            position={() => video.current?.currentTime ?? 0}
+            aller={(t) => {
+              if (video.current) video.current.currentTime = t
+            }}
+          />
+        )}
       </Panel>
     </motion.div>
   )
@@ -343,6 +484,8 @@ export function NewDubbing() {
   const queryClient = useQueryClient()
   const { data: health } = useQuery({ queryKey: ['health'], queryFn: getHealth, retry: 1 })
   const [file, setFile] = useState<File | null>(null)
+  // Raccourcir la vidéo : passage gardé (null = toute la vidéo)
+  const [decoupe, setDecoupe] = useState<Decoupe | null>(null)
   const [langue, setLangue] = useState('fr')
   const [options, setOptions] = useState<JobOptions>({
     conserver_fond: true,
@@ -377,7 +520,10 @@ export function NewDubbing() {
     const probleme = verifierFichier(f)
     setErreur(probleme)
     if (probleme) setRefus((n) => n + 1)
-    else setFile(f)
+    else {
+      setFile(f)
+      setDecoupe(null)
+    }
   }
 
   const lancer = async () => {
@@ -385,7 +531,8 @@ export function NewDubbing() {
     setErreur(null)
     setEnvoi(0)
     try {
-      const job = await createJob(file, langue, options, setEnvoi)
+      const passage = decoupe ? { debut_s: Math.round(decoupe.debut * 100) / 100, fin_s: Math.round(decoupe.fin * 100) / 100 } : {}
+      const job = await createJob(file, langue, { ...options, ...passage }, setEnvoi)
       await queryClient.invalidateQueries({ queryKey: ['jobs'] })
       navigate({ page: 'projet', id: job.id })
     } catch (e) {
@@ -409,7 +556,11 @@ export function NewDubbing() {
       <motion.div variants={staggerVariants} initial="hidden" animate="visible" className="flex flex-col gap-6">
         <motion.div variants={cardVariants} className="grid gap-6 xl:grid-cols-[1fr_440px]">
           <DropZone key={refus} onFile={choisirFichier} refus={refus > 0 && !!erreur} />
-          {file ? <VideoPreview file={file} onRemove={() => setFile(null)} /> : <EmptyPreview />}
+          {file ? (
+            <VideoPreview file={file} onRemove={() => setFile(null)} decoupe={decoupe} onDecoupe={setDecoupe} />
+          ) : (
+            <EmptyPreview />
+          )}
         </motion.div>
 
         <AnimatePresence>

@@ -88,6 +88,10 @@ export type JobOptions = {
   strategie_duree?: StrategieDuree
   /** Attribuer automatiquement une voix de la bibliothèque à chaque locuteur. */
   voix_bibliotheque?: boolean
+  /** Raccourcir la vidéo : passage gardé (en secondes) */
+  debut_s?: number
+  fin_s?: number
+  decoupe?: { debut_s: number; fin_s: number }
 }
 
 export type Job = {
@@ -287,7 +291,9 @@ export async function createJob(
 ): Promise<Job> {
   const form = new FormData()
   form.append('langue_cible', langueCible)
-  for (const [cle, valeur] of Object.entries(options)) form.append(cle, String(valeur))
+  for (const [cle, valeur] of Object.entries(options)) {
+    if (valeur !== undefined && valeur !== null && typeof valeur !== 'object') form.append(cle, String(valeur))
+  }
 
   if (video.size <= MORCEAU) {
     form.append('video', video)

@@ -70,6 +70,10 @@ MP4, MOV, MKV, WEBM, AVI, M4V, WMV, FLV, TS et MPG, **sans limite de taille ni d
 
 En mode CPU, comptez environ une minute de calcul par minute de vidéo pour la transcription et la traduction (plus pour les phases suivantes).
 
+**Raccourcir la vidéo** : sous l'aperçu, ce bouton permet de ne garder qu'un passage (curseur à deux poignées,
+ou « Début ici » / « Fin ici » pendant la lecture). Seul ce passage est doublé : la vidéo est coupée
+au début du traitement, à l'image près.
+
 ## Traduction
 
 La traduction se fait phrase par phrase avec Ollama (`qwen2.5:3b` en mode CPU, `qwen2.5:7b` avec une carte NVIDIA ≥ 8 Go), en donnant au modèle les phrases voisines comme contexte et une longueur cible. Si Ollama ne répond pas, NLLB-200 prend le relais automatiquement.

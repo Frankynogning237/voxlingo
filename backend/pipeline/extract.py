@@ -37,6 +37,24 @@ def probe_duration(video: Path) -> float:
     return float(json.loads(result.stdout)["format"]["duration"])
 
 
+def couper_video(video: Path, sortie: Path, debut_s: float, fin_s: float) -> Path:
+    """Garde seulement le passage [debut_s, fin_s] de la vidéo (option « Raccourcir la vidéo »).
+
+    La vidéo est réencodée (H.264 + AAC, MP4) pour une coupe exacte à l'image près, sans
+    décalage entre l'image et le son ; seules les premières pistes vidéo et audio sont gardées.
+    """
+    result = subprocess.run(
+        [_require("ffmpeg"), "-y", "-v", "error", "-ss", f"{debut_s:.3f}", "-i", str(video),
+         "-t", f"{fin_s - debut_s:.3f}", "-map", "0:v:0", "-map", "0:a:0?",
+         "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-pix_fmt", "yuv420p",
+         "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(sortie)],
+        capture_output=True, text=True,
+    )
+    if result.returncode != 0 or not sortie.is_file():
+        raise FFmpegError(f"Impossible de raccourcir la vidéo : {result.stderr.strip()[-300:]}")
+    return sortie
+
+
 def has_audio(video: Path) -> bool:
     """Indique si la vidéo contient au moins une piste audio."""
     result = subprocess.run(
