@@ -154,7 +154,9 @@ gratuit de Kaggle (≈ 30 h/semaine) ou de Colab, joignable grâce à un tunnel 
 **Interface sur Vercel (une seule fois)**
 1. vercel.com → *Sign up with GitHub* (offre Hobby) → *Add New… → Project* → importer le dépôt `voxlingo` ;
 2. *Root Directory* : `frontend` (Vite est détecté, `frontend/vercel.json` fait le reste) → *Deploy* ;
-3. noter l'adresse obtenue (par exemple `https://voxlingo.vercel.app`). Chaque `git push` republie l'interface.
+3. noter l'adresse obtenue. **Déjà fait : l'interface est en ligne sur https://voxlingo-gray.vercel.app**
+   (projet `voxlingo` de l'espace gratuit *stupora*). Pour la republier après une modification :
+   `cd frontend` puis `npx vercel deploy --prod`.
 
 **Moteur sur Kaggle (à chaque séance)**
 1. kaggle.com → *Create → New Notebook → File → Import Notebook* → `kaggle/moteur_voxlingo.ipynb` ;
