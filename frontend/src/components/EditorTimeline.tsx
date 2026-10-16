@@ -94,6 +94,8 @@ export function EditorTimeline({
   onSelect: (id: number) => void
 }) {
   const pistes = locuteurs.length ? locuteurs : PISTE_UNIQUE
+  // Au-delà de 4 locuteurs, pistes plus fines pour garder la frise compacte
+  const compact = pistes.length > 4
   const [zoom, setZoom] = useState(0) // 0 = toute la vidéo visible, 100 = zoom maximal
   const piste = useRef<HTMLDivElement>(null)
   const defilement = useRef<HTMLDivElement>(null)
@@ -172,13 +174,15 @@ export function EditorTimeline({
         </div>
       </div>
 
-      <div className="flex">
+      {/* Beaucoup de locuteurs : pistes plus fines, et la zone défile verticalement au lieu de pousser
+          les boutons du bas (« Valider et générer les voix ») hors de l'écran */}
+      <div className="flex max-h-[38svh] overflow-y-auto">
         {/* Libellés des pistes */}
         <div className="shrink-0 border-r border-white/5" style={{ width: LARGEUR_LIBELLES }}>
           <div className="h-[86px]" />
           {pistes.map((loc) => (
-            <div key={loc.code} className="flex h-11 items-center gap-3 px-4 text-[15px] text-white">
-              <span className="size-5 shrink-0 rounded-full" style={{ background: loc.couleur }} />
+            <div key={loc.code} className={cn('flex items-center gap-3 px-4 text-white', compact ? 'h-7 text-[13px]' : 'h-11 text-[15px]')}>
+              <span className={cn('shrink-0 rounded-full', compact ? 'size-3.5' : 'size-5')} style={{ background: loc.couleur }} />
               <span className="truncate">{loc.nom}</span>
               <ChevronRight className="ml-auto size-4 shrink-0 text-white/60" />
             </div>
@@ -212,7 +216,7 @@ export function EditorTimeline({
             <Filmstrip src={filmstrip} largeur={largeurPiste} />
             {/* Une piste par locuteur */}
             {pistes.map((loc) => (
-            <div key={loc.code} className="relative h-11 border-b border-white/5">
+            <div key={loc.code} className={cn('relative border-b border-white/5', compact ? 'h-7' : 'h-11')}>
               {segments.filter((seg) => pistes.length === 1 || (seg.locuteur ?? 'SPEAKER_00') === loc.code).map((seg) => (
                 <button
                   key={seg.id}
@@ -224,7 +228,8 @@ export function EditorTimeline({
                   }}
                   title={traductions[seg.id] ?? seg.traduction}
                   className={cn(
-                    'absolute top-1.5 h-8 overflow-hidden rounded-md px-2 text-left text-[13px] whitespace-nowrap text-white transition-[filter,box-shadow] duration-200 hover:brightness-110',
+                    'absolute overflow-hidden rounded-md px-2 text-left whitespace-nowrap text-white transition-[filter,box-shadow] duration-200 hover:brightness-110',
+                    compact ? 'top-1 h-5 text-[11px] leading-5' : 'top-1.5 h-8 text-[13px]',
                     selection === seg.id && 'ring-2 ring-white/80',
                     seg.trop_long && 'outline-2 outline-offset-1 outline-warning',
                   )}

@@ -280,7 +280,7 @@ export function Layout({ current, children }: { current: Route; children: ReactN
         </AnimatePresence>
       </main>
     </div>
-    <div ref={setSlot} className={cn(bottomActive && 'border-t border-sidebar-border bg-sidebar')} />
+    <div ref={setSlot} className={cn(bottomActive && 'max-h-[70svh] shrink-0 overflow-y-auto border-t border-sidebar-border bg-sidebar')} />
     </div>
     </BottomSlotContext.Provider>
   )
