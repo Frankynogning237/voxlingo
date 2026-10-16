@@ -27,7 +27,7 @@ import { Flag } from '@/components/Flag'
 import { GlossaireConsignes } from '@/components/GlossaireConsignes'
 import { Gradient, PageHeader } from '@/components/Layout'
 import { PrimaryButton } from '@/components/PrimaryButton'
-import { createJob, getHealth, getSettings, type JobOptions } from '@/lib/api'
+import { createJob, duplicateJob, getHealth, getSettings, type JobOptions } from '@/lib/api'
 import { formatDuree, formatTaille, nomLangue } from '@/lib/format'
 import { navigate } from '@/lib/router'
 import { cn } from '@/lib/utils'
@@ -400,24 +400,37 @@ function LanguagePicker({
   langues,
   value,
   onChange,
+  autres,
+  onAutres,
 }: {
   langues: string[]
   value: string
   onChange: (code: string) => void
+  /** Langues supplémentaires (plusieurs langues d'un clic) ; null : une seule langue */
+  autres: string[] | null
+  onAutres: (codes: string[] | null) => void
 }) {
   const [recherche, setRecherche] = useState('')
   const [tout, setTout] = useState(false)
+  const choisir = (code: string) => {
+    if (autres === null || code === value) return onChange(code)
+    onAutres(autres.includes(code) ? autres.filter((c) => c !== code) : [...autres, code])
+  }
   const filtre = recherche.trim().toLowerCase()
   const visibles = filtre
     ? langues.filter((code) => nomLangue(code).toLowerCase().includes(filtre) || code.includes(filtre))
     : tout
       ? langues
-      : [...LANGUES_VISIBLES, ...(LANGUES_VISIBLES.includes(value) ? [] : [value])].filter((c) => langues.includes(c))
+      : [...new Set([...LANGUES_VISIBLES, value, ...(autres ?? [])])].filter((c) => langues.includes(c))
 
   return (
     <Panel className="flex h-full flex-col gap-4 px-6 py-5">
       <div className="flex flex-wrap items-center gap-5">
-        <p className="text-[20px] font-semibold text-white">Langue cible</p>
+        <p className="text-[20px] font-semibold text-white">{autres === null ? 'Langue cible' : 'Langues cibles'}</p>
+        <label className="flex items-center gap-2.5 text-[14px] text-white/85" title="Un projet par langue, traités l'un après l'autre">
+          <Switch checked={autres !== null} onChange={(v) => onAutres(v ? [] : null)} label="Plusieurs langues" />
+          Plusieurs langues
+        </label>
         <label className="relative flex-1">
           <Search className="absolute top-1/2 left-4 size-5 -translate-y-1/2 text-white/70" />
           <input
@@ -433,7 +446,7 @@ function LanguagePicker({
         <AnimatePresence initial={false}>
           {visibles.map((code) => (
             <motion.div key={code} layout initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={voxTransition(0.2)}>
-              <LanguageChip code={code} actif={code === value} onClick={() => onChange(code)} />
+              <LanguageChip code={code} actif={code === value || !!autres?.includes(code)} onClick={() => choisir(code)} />
             </motion.div>
           ))}
         </AnimatePresence>
@@ -450,6 +463,13 @@ function LanguagePicker({
           </button>
         )}
       </div>
+      {autres !== null && (
+        <p className="text-[13px] text-white/60">
+          {autres.length === 0
+            ? `Cliquez sur d'autres langues pour doubler aussi la vidéo dans ces langues (en plus du ${nomLangue(value).toLowerCase()}).`
+            : `${1 + autres.length} doublages : ${[value, ...autres].map((c) => nomLangue(c)).join(', ')}. Un projet par langue, traités l'un après l'autre.`}
+        </p>
+      )}
     </Panel>
   )
 }
@@ -488,6 +508,8 @@ export function NewDubbing() {
   // Raccourcir la vidéo : passage gardé (null = toute la vidéo)
   const [decoupe, setDecoupe] = useState<Decoupe | null>(null)
   const [langue, setLangue] = useState('fr')
+  // Plusieurs langues d'un clic : langues en plus de la principale (null : une seule langue)
+  const [autresLangues, setAutresLangues] = useState<string[] | null>(null)
   const [options, setOptions] = useState<JobOptions>({
     conserver_fond: true,
     synchro_labiale: false,
@@ -534,8 +556,11 @@ export function NewDubbing() {
     try {
       const passage = decoupe ? { debut_s: Math.round(decoupe.debut * 100) / 100, fin_s: Math.round(decoupe.fin * 100) / 100 } : {}
       const job = await createJob(file, langue, { ...options, ...passage }, setEnvoi)
+      // Les autres langues : même vidéo, mêmes réglages, sans renvoyer le fichier
+      const autres = (autresLangues ?? []).filter((c) => c !== langue)
+      for (const code of autres) await duplicateJob(job.id, code)
       await queryClient.invalidateQueries({ queryKey: ['jobs'] })
-      navigate({ page: 'projet', id: job.id })
+      navigate(autres.length > 0 ? { page: 'projets' } : { page: 'projet', id: job.id })
     } catch (e) {
       setErreur(e instanceof Error ? e.message : String(e))
       setEnvoi(null)
@@ -579,7 +604,16 @@ export function NewDubbing() {
 
         <motion.div variants={cardVariants} className="grid gap-6 xl:grid-cols-[340px_1fr]">
           <DetectedLanguage />
-          <LanguagePicker langues={health?.langues_cibles ?? LANGUES_VISIBLES} value={langue} onChange={setLangue} />
+          <LanguagePicker
+            langues={health?.langues_cibles ?? LANGUES_VISIBLES}
+            value={langue}
+            onChange={(code) => {
+              setLangue(code)
+              setAutresLangues((a) => a && a.filter((c) => c !== code))
+            }}
+            autres={autresLangues}
+            onAutres={setAutresLangues}
+          />
         </motion.div>
 
         <motion.div variants={cardVariants}>

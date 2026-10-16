@@ -194,8 +194,9 @@ def delete_job(job_id: str) -> None:
     shutil.rmtree(project_dir(job_id))
 
 
-def duplicate_job(job_id: str) -> dict[str, Any]:
-    """Crée un nouveau projet avec la même vidéo et les mêmes réglages, puis lance le traitement."""
+def duplicate_job(job_id: str, langue_cible: str | None = None) -> dict[str, Any]:
+    """Crée un nouveau projet avec la même vidéo et les mêmes réglages (dans une autre langue cible
+    si `langue_cible` est donnée), puis lance le traitement."""
     import shutil
 
     source = read_status(job_id)
@@ -208,7 +209,8 @@ def duplicate_job(job_id: str) -> dict[str, Any]:
     options = dict(source.get("options") or {})
     if source.get("decoupe_appliquee"):
         options.pop("decoupe", None)  # la vidéo copiée est déjà raccourcie
-    status = create_job(nouveau, source["nom_fichier"], source["fichier"], source["langue_cible"], options)
+    status = create_job(nouveau, source["nom_fichier"], source["fichier"], langue_cible or source["langue_cible"],
+                        options)
     start_job(nouveau)
     return status
 

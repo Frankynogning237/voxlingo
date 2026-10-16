@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
 from collections.abc import Callable
 
@@ -196,8 +197,24 @@ def _ajuster(job_id: str, ids: set[int] | None, report: Callable[[float], None])
     jobs.update_status(job_id, traduction_validee=False, dernier_ajustement=bilan)
 
 
+# File d'attente : un seul nouveau projet traité à la fois (plusieurs langues lancées d'un coup,
+# plusieurs vidéos…) ; les suivants restent « en attente » sans saturer la mémoire.
+_FILE_ATTENTE = threading.Semaphore(1)
+
+
 def run_pipeline(job_id: str) -> None:
-    """Point d'entrée du thread de traitement d'une nouvelle tâche."""
+    """Point d'entrée du thread de traitement d'une nouvelle tâche (attend son tour dans la file)."""
+    with _FILE_ATTENTE:
+        status = jobs.read_status(job_id)
+        if status is not None and status.get("annulation_demandee"):
+            # Annulé pendant qu'il attendait son tour
+            jobs.update_status(job_id, etat="annule", erreur="Traitement annulé par l'utilisateur.",
+                               annulation_demandee=False, fin_traitement=jobs._now())
+            return
+        _traiter(job_id)
+
+
+def _traiter(job_id: str) -> None:
     status = jobs.read_status(job_id)
     if status is None:
         logger.error("Tâche %s introuvable", job_id)

@@ -256,7 +256,9 @@ export const saveSettings = (valeurs: ValeursParametres) => send<Parametres>('/p
 export const openProjectsFolder = () => send<{ ok: boolean }>('/parametres/ouvrir-dossier', 'POST')
 
 export const deleteJob = (id: string) => send<{ supprime: string }>(`/jobs/${id}`, 'DELETE')
-export const duplicateJob = (id: string) => send<Job>(`/jobs/${id}/dupliquer`, 'POST')
+/** Nouveau projet avec la même vidéo et les mêmes réglages, éventuellement dans une autre langue. */
+export const duplicateJob = (id: string, langueCible?: string) =>
+  send<Job>(`/jobs/${id}/dupliquer`, 'POST', langueCible ? { langue_cible: langueCible } : undefined)
 
 export const setStrategy = (id: string, strategie_duree: StrategieDuree) =>
   send<Job>(`/jobs/${id}/options`, 'PUT', { strategie_duree })

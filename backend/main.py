@@ -642,11 +642,19 @@ def delete_job(job_id: str) -> dict:
     return {"supprime": job_id}
 
 
+class Duplication(BaseModel):
+    langue_cible: str | None = None  # autre langue cible (plusieurs langues d'un clic)
+
+
 @app.post("/jobs/{job_id}/dupliquer", status_code=201)
-def duplicate_job(job_id: str) -> dict:
-    """Nouveau projet avec la même vidéo et les mêmes réglages (le traitement démarre aussitôt)."""
+def duplicate_job(job_id: str, demande: Duplication | None = None) -> dict:
+    """Nouveau projet avec la même vidéo et les mêmes réglages, éventuellement dans une autre langue
+    (le traitement démarre dès que les projets précédents sont terminés)."""
     _get_status_or_404(job_id)
-    return jobs.duplicate_job(job_id)
+    langue = demande.langue_cible if demande else None
+    if langue is not None and langue not in get_settings().target_languages:
+        raise HTTPException(400, f"Langue cible non prise en charge : {langue}.")
+    return jobs.duplicate_job(job_id, langue)
 
 
 CHOIX_TRANSCRIPTION = [
