@@ -458,7 +458,7 @@ export function Result({ job }: { job: Job }) {
 
           <div className="mt-4 flex flex-col gap-3">
             <PrimaryButton href={downloadUrl(job.id, 'download')} size="lg" className="h-14 rounded-2xl">
-              <Download className="size-5" /> Télécharger la vidéo (MP4)
+              <Download className="size-5" /> Télécharger la vidéo ({(job.fichier_sortie ?? job.fichier).split(".").pop()?.toUpperCase()})
             </PrimaryButton>
             <a
               href={sousTitres ? downloadUrl(job.id, 'subtitles') : undefined}

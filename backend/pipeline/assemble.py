@@ -87,25 +87,6 @@ def mixer_fond(voix: Path, fond: Path, volume: int, sortie: Path) -> Path:
     return sortie
 
 
-def exporter_video(video: Path, piste: Path, sortie: Path) -> Path:
-    """Remplace l'audio de la vidéo par la piste doublée, sans réencoder l'image."""
-    ffmpeg = _require("ffmpeg")
-    commande = [ffmpeg, "-y", "-v", "error", "-i", str(video), "-i", str(piste),
-                "-map", "0:v:0", "-map", "1:a:0", "-c:a", "aac", "-b:a", "192k",
-                "-movflags", "+faststart"]
-    resultat = subprocess.run([*commande, "-c:v", "copy", str(sortie)], capture_output=True, text=True)
-    if resultat.returncode != 0:
-        # Codec vidéo non accepté en MP4 (rare) : réencodage en H.264
-        logger.warning("Copie de la vidéo impossible (%s), réencodage", resultat.stderr.strip()[:200])
-        resultat = subprocess.run(
-            [*commande, "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p", str(sortie)],
-            capture_output=True, text=True,
-        )
-        if resultat.returncode != 0:
-            raise FFmpegError(f"L'export de la vidéo a échoué : {resultat.stderr.strip()[:300]}")
-    return sortie
-
-
 def _horodatage_srt(s: float) -> str:
     ms = int(round(s * 1000))
     h, ms = divmod(ms, 3_600_000)

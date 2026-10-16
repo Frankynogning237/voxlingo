@@ -70,6 +70,12 @@ MP4, MOV, MKV, WEBM, AVI, M4V, WMV, FLV, TS et MPG, **sans limite de taille ni d
 
 En mode CPU, comptez environ une minute de calcul par minute de vidéo pour la transcription et la traduction (plus pour les phases suivantes).
 
+**Format conservé à l'identique** : la vidéo doublée garde le conteneur (MP4, MOV, MKV, WEBM, AVI, WMV…), le codec,
+la résolution, la cadence et l'orientation de la vidéo fournie ; le son doublé reprend le codec, la fréquence, le nombre
+de canaux et le débit du son d'origine. L'image est copiée sans réencodage ; elle n'est réencodée (dans le même codec,
+à la même taille et cadence) que pour « Raccourcir la vidéo » et pour remettre au format la vidéo synchronisée sur Kaggle.
+Si le navigateur ne sait pas lire ce format, le site affiche une copie MP4 pour l'aperçu seulement.
+
 **Raccourcir la vidéo** : sous l'aperçu, ce bouton permet de ne garder qu'un passage (curseur à deux poignées,
 ou « Début ici » / « Fin ici » pendant la lecture). Seul ce passage est doublé : la vidéo est coupée
 au début du traitement, à l'image près.

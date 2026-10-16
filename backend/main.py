@@ -479,16 +479,24 @@ def _nom_telechargement(status: dict, extension: str) -> str:
 
 @app.get("/jobs/{job_id}/download")
 def download_video(job_id: str) -> FileResponse:
-    """Vidéo doublée (MP4)."""
+    """Vidéo doublée, au format exact de la vidéo fournie."""
+    import mimetypes
+
     status = _get_status_or_404(job_id)
-    return FileResponse(_video_finale(job_id, status), media_type="video/mp4", filename=_nom_telechargement(status, "mp4"))
+    finale = _video_finale(job_id, status)
+    type_mime = mimetypes.guess_type(finale.name)[0] or "application/octet-stream"
+    return FileResponse(finale, media_type=type_mime,
+                        filename=_nom_telechargement(status, finale.suffix.lstrip(".").lower()))
 
 
 @app.get("/jobs/{job_id}/dubbed")
 def stream_dubbed(job_id: str) -> FileResponse:
-    """Vidéo doublée pour la lecture dans l'interface (sans forcer le téléchargement)."""
+    """Vidéo doublée pour la lecture dans l'interface (copie MP4 si le format d'origine ne s'y lit pas)."""
+    import mimetypes
+
     status = _get_status_or_404(job_id)
-    return FileResponse(_video_finale(job_id, status), media_type="video/mp4")
+    apercu = _apercu_finale(job_id, status)
+    return FileResponse(apercu, media_type=mimetypes.guess_type(apercu.name)[0] or "video/mp4")
 
 
 RACINE = Path(__file__).resolve().parent.parent
@@ -511,9 +519,15 @@ def kaggle_package(job_id: str) -> FileResponse:
         "4. Run All, puis téléchargez video_synchronisee.mp4 (Output)\n"
         "5. Dans VoxLingo, écran Résultat > Synchronisation labiale > Importer la vidéo synchronisée\n"
     )
+    doublee = _fichier_projet(job_id, status.get("fichier_sortie") or "doublage.mp4",
+                              "Générez d'abord les voix du projet.")
+    if doublee.suffix.lower() != ".mp4":
+        # Le carnet de synchronisation lit du MP4 ; le résultat sera remis au format d'origine à l'import
+        from pipeline.format import apercu_navigateur
+
+        doublee = apercu_navigateur(doublee, dossier / "pour_kaggle.mp4", toujours=True) or doublee
     with zipfile.ZipFile(paquet, "w", zipfile.ZIP_STORED) as z:
-        # Vidéo exportée (même image que l'original, toujours au format MP4)
-        z.write(_fichier_projet(job_id, "doublage.mp4", "Générez d'abord les voix du projet."), "video_originale.mp4")
+        z.write(doublee, "video_originale.mp4")
         z.write(piste, "voix_doublee.wav")
         z.write(RACINE / "kaggle" / "lipsync_kaggle.ipynb", "lipsync_kaggle.ipynb")
         z.writestr("LISEZMOI.txt", guide)
@@ -525,19 +539,29 @@ async def import_lipsync(job_id: str, video: UploadFile = File(...)) -> dict:
     """Importe la vidéo synchronisée par Kaggle : elle devient la vidéo doublée téléchargeable."""
     from pipeline.extract import probe_duration
 
+    from pipeline.format import apercu_navigateur, conformer
+
     status = _get_status_or_404(job_id)
-    cible = jobs.project_dir(job_id) / "doublage_synchro.mp4"
-    with cible.open("wb") as sortie:
+    dossier = jobs.project_dir(job_id)
+    recue = dossier / "synchro_recue.mp4"
+    with recue.open("wb") as sortie:
         while chunk := await video.read(CHUNK_BYTES):
             sortie.write(chunk)
     try:
-        duree = probe_duration(cible)
+        duree = probe_duration(recue)
     except Exception:
-        cible.unlink(missing_ok=True)
+        recue.unlink(missing_ok=True)
         raise HTTPException(400, "Ce fichier n'est pas une vidéo lisible.") from None
     if status.get("duree_s") and abs(duree - status["duree_s"]) > 2:
-        cible.unlink(missing_ok=True)
+        recue.unlink(missing_ok=True)
         raise HTTPException(400, f"Cette vidéo dure {duree:.0f} s au lieu de {status['duree_s']:.0f} s : ce n'est pas le bon fichier.")
+    # Remise au format exact de la vidéo fournie (résolution, cadence, codecs, conteneur)
+    originale = dossier / status["fichier"]
+    for ancienne in dossier.glob("doublage_synchro.*"):
+        ancienne.unlink()
+    cible = conformer(recue, originale, dossier / f"doublage_synchro{originale.suffix.lower()}")
+    recue.unlink(missing_ok=True)
+    apercu_navigateur(cible, dossier / "apercu_synchro.mp4")
     jobs.update_step(job_id, "synchro_labiale", etat="termine")
     return jobs.update_status(job_id, synchro_importee=True)
 
@@ -546,17 +570,28 @@ async def import_lipsync(job_id: str, video: UploadFile = File(...)) -> dict:
 def remove_lipsync(job_id: str) -> dict:
     """Revient à la vidéo doublée sans synchronisation labiale."""
     _get_status_or_404(job_id)
-    (jobs.project_dir(job_id) / "doublage_synchro.mp4").unlink(missing_ok=True)
+    for fichier in jobs.project_dir(job_id).glob("doublage_synchro.*"):
+        fichier.unlink()
+    (jobs.project_dir(job_id) / "apercu_synchro.mp4").unlink(missing_ok=True)
     jobs.update_step(job_id, "synchro_labiale", etat="kaggle")
     return jobs.update_status(job_id, synchro_importee=False)
 
 
 def _video_finale(job_id: str, status: dict) -> Path:
-    """Vidéo synchronisée si elle a été importée, sinon la vidéo doublée."""
-    synchro = jobs.project_dir(job_id) / "doublage_synchro.mp4"
-    if status.get("synchro_importee") and synchro.is_file():
-        return synchro
-    return _fichier_projet(job_id, "doublage.mp4", "La vidéo doublée n'est pas encore prête.")
+    """Vidéo synchronisée si elle a été importée, sinon la vidéo doublée (au format d'origine)."""
+    if status.get("synchro_importee"):
+        synchro = next(jobs.project_dir(job_id).glob("doublage_synchro.*"), None)
+        if synchro is not None:
+            return synchro
+    return _fichier_projet(job_id, status.get("fichier_sortie") or "doublage.mp4",
+                           "La vidéo doublée n'est pas encore prête.")
+
+
+def _apercu_finale(job_id: str, status: dict) -> Path:
+    """Version lisible par le navigateur de la vidéo finale (elle-même, ou sa copie MP4)."""
+    finale = _video_finale(job_id, status)
+    copie = finale.with_name("apercu_synchro.mp4" if finale.stem == "doublage_synchro" else "apercu.mp4")
+    return copie if copie.is_file() else finale
 
 
 @app.get("/jobs/{job_id}/subtitles")

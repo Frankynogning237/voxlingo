@@ -233,11 +233,12 @@ def _traiter(job_id: str) -> None:
         decoupe = (status.get("options") or {}).get("decoupe")
         if decoupe and not jobs.read_status(job_id).get("decoupe_appliquee"):
             # Option « Raccourcir la vidéo » : la suite du traitement ne voit que le passage gardé
-            from pipeline.extract import couper_video
+            from pipeline.format import couper_meme_format
 
-            coupee = couper_video(video, folder / "input_coupee.mp4", decoupe["debut_s"], decoupe["fin_s"])
+            # Même conteneur, codecs, résolution et cadence que la vidéo fournie
+            coupee = couper_meme_format(video, folder / f"input_coupee{video.suffix}", decoupe["debut_s"], decoupe["fin_s"])
             video.unlink()
-            video = coupee.replace(folder / "input.mp4")
+            video = coupee.replace(folder / f"input{video.suffix}")
             jobs.update_status(job_id, fichier=video.name, decoupe_appliquee=True)
             logger.info("[%s] Vidéo raccourcie : %.1f s → %.1f s", job_id, decoupe["debut_s"], decoupe["fin_s"])
             report(0.2)
@@ -458,7 +459,8 @@ def _ajouter_intonation(job_id: str, status: dict, data: dict) -> None:
 def _do_export(job_id: str, report: Callable[[float], None]) -> None:
     """Cale chaque voix sur son temps, construit la piste doublée et exporte vidéo et sous-titres."""
     from pipeline.align import caler
-    from pipeline.assemble import construire_piste, ecrire_srt, exporter_video, mixer_fond
+    from pipeline.assemble import construire_piste, ecrire_srt, mixer_fond
+    from pipeline.format import apercu_navigateur, exporter_meme_format
     from pipeline.prosody import gain_volume
     from pipeline.voice import fichier_brut
 
@@ -491,12 +493,16 @@ def _do_export(job_id: str, report: Callable[[float], None]) -> None:
     else:
         (folder / "voix_doublee.wav").replace(folder / "doublage.wav")
     report(0.7)
-    exporter_video(folder / status["fichier"], folder / "doublage.wav", folder / "doublage.mp4")
+    # Vidéo doublée au format exact de la vidéo fournie (conteneur, codecs, résolution, cadence, son)
+    video = folder / status["fichier"]
+    sortie = folder / f"doublage{video.suffix.lower()}"
+    exporter_meme_format(video, folder / "doublage.wav", sortie)
+    apercu_navigateur(sortie, folder / "apercu.mp4")  # lecture dans le site, si ce format ne s'y lit pas
     if status.get("options", {}).get("sous_titres", True):
         ecrire_srt(data["segments"], folder / "sous-titres.srt")
     jobs.update_status(
         job_id,
-        fichier_sortie="doublage.mp4",
+        fichier_sortie=sortie.name,
         segments_trop_longs=sum(1 for s in data["segments"] if s["trop_long"]),
     )
 
