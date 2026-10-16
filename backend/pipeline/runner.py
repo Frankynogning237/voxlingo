@@ -418,7 +418,7 @@ def _do_voices(job_id: str, report: Callable[[float], None]) -> None:
         jobs.write_segments(job_id, data)
     par_locuteur = voix_des_locuteurs(job_id, data)
     if (status.get("options") or {}).get("intonation_originale", True):
-        _ajouter_intonation(job_id, status, data)
+        _ajouter_intonation(job_id, status, data, par_locuteur)
     report(0.02)
     generees = generer_voix(
         data["segments"], status["langue_cible"],
@@ -437,8 +437,11 @@ def _do_voices(job_id: str, report: Callable[[float], None]) -> None:
     jobs.update_status(job_id, voix_generees=generees)
 
 
-def _ajouter_intonation(job_id: str, status: dict, data: dict) -> None:
-    """Voix clonées : chaque phrase reçoit l'extrait de sa phrase d'origine, qui guide l'intonation."""
+def _ajouter_intonation(job_id: str, status: dict, data: dict, par_locuteur: dict[str, str]) -> None:
+    """Voix clonées : chaque phrase reçoit l'extrait de sa phrase d'origine, qui guide l'intonation.
+
+    Seulement pour une voix réellement clonée (« ref: ») : un locuteur qui parle trop peu reçoit une
+    voix de la bibliothèque (« xtts: ») même si « clone » est demandé, et garde alors son propre style."""
     from pipeline.voice import extraire_intonation
 
     folder = jobs.project_dir(job_id)
@@ -447,7 +450,8 @@ def _ajouter_intonation(job_id: str, status: dict, data: dict) -> None:
     fiche = jobs.locuteurs(data)
     n = 0
     for seg in data["segments"]:
-        if (fiche.get(jobs.locuteur(seg)) or {}).get("voix", "clone") != "clone":
+        code = jobs.locuteur(seg)
+        if (fiche.get(code) or {}).get("voix", "clone") != "clone" or not par_locuteur.get(code, "").startswith("ref:"):
             continue  # voix de la bibliothèque : son propre style
         extrait = extraire_intonation(source, seg, folder / "voix" / f"intonation_{seg['id']:05d}.wav")
         if extrait is not None:

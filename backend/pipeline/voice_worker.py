@@ -50,7 +50,7 @@ def main(chemin_tache: str) -> None:
         l'échantillon de référence, mais le style de diction (latents GPT) s'inspire de la phrase
         d'origine, pour en garder l'émotion (colère, rire, chuchotement…)."""
         base = voix.split("|")[0]  # la transformation d'âge est appliquée après synthèse
-        if intonation:
+        if intonation and base.startswith("ref:"):  # voix de la bibliothèque : pas d'intonation importée
             cle = f"{voix}#{intonation}"
             if cle not in conditionnements:
                 _, empreinte = conditionnement(voix)
