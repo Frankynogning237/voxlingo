@@ -229,7 +229,7 @@ function BilanBandeau({ bilan, onClose }: { bilan: BilanAjustement; onClose: () 
       className="mb-4 flex items-center gap-3 rounded-xl border border-cyan-400/40 bg-cyan-400/[0.07] px-4 py-2.5 text-[14px] text-white"
     >
       <Scissors className="size-4 shrink-0 text-cyan-300" />
-      <p className="flex-1">
+      <p className="min-w-0 flex-1">
         <span className="font-medium">Ajustement automatique :</span>{' '}
         {parties.length ? parties.join(', ') : 'aucune phrase modifiée'}.
         {bilan.a_revoir > 0 && (
@@ -354,7 +354,7 @@ function SegmentRow({
       variants={cardVariants}
       onClick={onSelect}
       className={cn(
-        'grid grid-cols-[20px_76px_1fr_20px_1fr_104px_32px_24px] items-center gap-2 border-b border-white/[0.06] px-5 py-3 transition-colors duration-200 last:border-0',
+        'grid min-w-[720px] grid-cols-[20px_76px_1fr_20px_1fr_104px_32px_24px] items-center gap-2 border-b border-white/[0.06] px-5 py-3 transition-colors duration-200 last:border-0',
         selectionne ? 'bg-violet-500/[0.08]' : 'hover:bg-white/[0.02]',
       )}
     >
@@ -862,8 +862,8 @@ export function TranslationEditor({ job }: { job: Job }) {
         <div>
           <video ref={video} src={videoUrl(job.id)} controls preload="metadata" className="aspect-video w-full rounded-xl bg-black" />
         </div>
-        <Panel className="overflow-visible">
-          <div className="grid grid-cols-[20px_76px_1fr_20px_1fr_104px_32px_24px] gap-2 border-b border-white/[0.08] px-5 py-3.5 text-[16px] font-medium text-white">
+        <Panel className="overflow-x-auto md:overflow-visible">
+          <div className="grid min-w-[720px] grid-cols-[20px_76px_1fr_20px_1fr_104px_32px_24px] gap-2 border-b border-white/[0.08] px-5 py-3.5 text-[16px] font-medium text-white">
             <span />
             <span />
             <span>Texte original</span>
@@ -923,10 +923,10 @@ export function TranslationEditor({ job }: { job: Job }) {
           onSelect={setSelection}
         />
         <div className="flex flex-wrap items-center gap-5 px-6 pt-1 pb-4">
-          <div className="w-[214px]">
+          <div className="hidden w-[214px] md:block">
             <UserFooter bordered={false} />
           </div>
-          <span className="flex items-center gap-2.5 rounded-full border border-white/12 bg-white/[0.02] px-5 py-2.5 text-[15px] text-white/90">
+          <span className="flex max-w-full items-center gap-2.5 rounded-2xl border border-white/12 bg-white/[0.02] px-5 py-2.5 text-[15px] text-white/90">
             <CircleCheck className="size-5 fill-success text-[#0e1119]" />
             {job.traduction_validee ? 'Traduction validée' : 'Traduction prête'}
             <span className="text-white/50">•</span> {segments.length} segment{segments.length > 1 ? 's' : ''} détecté{segments.length > 1 ? 's' : ''}
@@ -943,7 +943,7 @@ export function TranslationEditor({ job }: { job: Job }) {
               </>
             )}
           </span>
-          <div className="ml-auto flex items-center gap-4">
+          <div className="flex w-full flex-wrap items-center gap-4 md:ml-auto md:w-auto">
             <button
               type="button"
               disabled={occupe || modifications.length === 0 || vide}
@@ -956,7 +956,7 @@ export function TranslationEditor({ job }: { job: Job }) {
               size="lg"
               disabled={occupe || vide || segments.length === 0}
               onClick={() => valider.mutate()}
-              className="h-14 min-w-80 rounded-2xl"
+              className="h-14 w-full rounded-2xl sm:w-auto sm:min-w-80"
             >
               Valider et générer les voix <ArrowRight className="size-5" />
             </PrimaryButton>

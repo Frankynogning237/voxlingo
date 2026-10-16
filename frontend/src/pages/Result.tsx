@@ -296,7 +296,7 @@ function SynchroLabiale({ job }: { job: Job }) {
   return (
     <Panel className="mt-6 px-6 py-5">
       <div className="flex flex-wrap items-start gap-6">
-        <div className="min-w-72 flex-1">
+        <div className="min-w-0 flex-1 sm:min-w-72">
           <p className="flex items-center gap-3 text-[20px] font-semibold text-white">
             <LipsIcon className="size-6" /> Synchronisation labiale
             {job.synchro_importee && (
@@ -419,10 +419,10 @@ export function Result({ job }: { job: Job }) {
         )}
       </AnimatePresence>
 
-      <div className="grid gap-6 xl:grid-cols-[1fr_440px]">
+      <div className="grid gap-6 *:min-w-0 xl:grid-cols-[1fr_440px]">
         <div>
           <Comparateur job={job} piste={piste} setPiste={setPiste} />
-          <div className="mx-auto mt-5 flex w-fit items-center gap-5 rounded-full border border-white/12 bg-white/[0.02] px-6 py-3 text-[15px] text-white">
+          <div className="mx-auto mt-5 flex w-fit max-w-full flex-wrap items-center justify-center gap-x-5 gap-y-2 rounded-3xl border border-white/12 bg-white/[0.02] px-6 py-3 text-[15px] text-white">
             <span className="flex items-center gap-2">
               <CirclePlay className="size-5 text-violet-300" /> Audio actuel :
               <LangueTag langue={piste === 'original' ? job.langue_source : job.langue_cible} />

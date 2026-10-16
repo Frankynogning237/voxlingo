@@ -39,7 +39,7 @@ function RecentProjects() {
         variants={staggerVariants}
         initial="hidden"
         animate="visible"
-        className="grid gap-5 lg:grid-cols-2 xl:grid-cols-3"
+        className="grid gap-5 *:min-w-0 lg:grid-cols-2 xl:grid-cols-3"
       >
         {jobs?.slice(0, 3).map((job) => <ProjectCard key={job.id} job={job} />)}
       </motion.div>
@@ -91,7 +91,7 @@ export function Home() {
               Importez une vidéo, choisissez vos langues, et laissez VoxLingo faire le reste : transcription,
               traduction, clonage vocal et synchronisation labiale.
             </p>
-            <PrimaryButton href={href({ page: 'nouveau' })} size="lg" className="mt-7 min-w-80">
+            <PrimaryButton href={href({ page: 'nouveau' })} size="lg" className="mt-7 w-full sm:w-auto sm:min-w-80">
               <Plus className="size-5" strokeWidth={2.2} /> Importer une vidéo
             </PrimaryButton>
           </div>

@@ -345,7 +345,7 @@ export function Projects() {
       </div>
 
       {isLoading && (
-        <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">
+        <div className="grid gap-5 *:min-w-0 md:grid-cols-2 xl:grid-cols-3">
           {Array.from({ length: 3 }, (_, i) => (
             <div key={i} className="h-72 animate-pulse rounded-2xl bg-white/[0.04]" />
           ))}
@@ -365,7 +365,7 @@ export function Projects() {
         variants={staggerVariants}
         initial={visibles.length <= 30 ? 'hidden' : false}
         animate="visible"
-        className={vue === 'grille' ? 'grid gap-5 md:grid-cols-2 xl:grid-cols-3' : 'flex flex-col gap-3'}
+        className={vue === 'grille' ? 'grid gap-5 *:min-w-0 md:grid-cols-2 xl:grid-cols-3' : 'flex flex-col gap-3'}
       >
         <AnimatePresence>
           {visibles.map((job) => (vue === 'grille' ? <CarteProjet key={job.id} job={job} /> : <LigneProjet key={job.id} job={job} />))}

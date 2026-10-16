@@ -684,15 +684,15 @@ export function NewDubbing() {
         </motion.div>
 
         <motion.div variants={cardVariants} className="flex flex-wrap items-center gap-6 border-t border-white/5 pt-5">
-          <div className={cn('flex items-center gap-4', !options.conserver_fond && 'opacity-40')}>
+          <div className={cn('flex w-full flex-wrap items-center gap-x-4 gap-y-2 md:w-auto', !options.conserver_fond && 'opacity-40')}>
             <Volume2 className="size-6 text-white/90" />
             <span className="text-[17px] text-white">Volume du fond :</span>
-            <div className="w-64">
+            <div className="w-full max-w-64 flex-1 md:w-64 md:flex-none">
               <Slider value={options.volume_fond} onChange={(v) => setOption('volume_fond', v)} label="Volume du fond" />
             </div>
             <span className="w-14 text-[17px] text-white tabular-nums">{options.volume_fond} %</span>
           </div>
-          <div className="ml-auto flex items-center gap-5">
+          <div className="flex w-full flex-wrap items-center gap-5 md:ml-auto md:w-auto">
             {envoi !== null && (
               <div className="flex w-56 items-center gap-3 text-sm text-white/80">
                 <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
@@ -701,7 +701,7 @@ export function NewDubbing() {
                 Envoi {Math.round(envoi * 100)} %
               </div>
             )}
-            <PrimaryButton size="lg" disabled={!file || envoi !== null} onClick={lancer} className="min-w-80">
+            <PrimaryButton size="lg" disabled={!file || envoi !== null} onClick={lancer} className="w-full md:w-auto md:min-w-80">
               <Play className="size-5 fill-white" /> Lancer l'analyse
             </PrimaryButton>
           </div>

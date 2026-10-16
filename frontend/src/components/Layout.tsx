@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { AnimatePresence, motion } from 'framer-motion'
-import { ArrowLeft, ChevronDown, CirclePlus, FolderClosed, House, Info, Settings, UsersRound, type LucideIcon } from 'lucide-react'
+import { ArrowLeft, ChevronDown, CirclePlus, FolderClosed, House, Info, Menu, Settings, UsersRound, X, type LucideIcon } from 'lucide-react'
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 
@@ -95,13 +95,16 @@ export function UserFooter({ bordered = true }: { bordered?: boolean }) {
   )
 }
 
-function Sidebar({ current, footer }: { current: Route; footer: boolean }) {
+function Sidebar({ current, footer, className }: { current: Route; footer: boolean; className?: string }) {
   return (
     <motion.aside
       initial={{ opacity: 0, x: -8 }}
       animate={{ opacity: 1, x: 0 }}
       transition={voxTransition(0.4)}
-      className="relative flex w-[260px] shrink-0 flex-col overflow-hidden border-r border-sidebar-border bg-sidebar px-4 pt-10 pb-7"
+      className={cn(
+        'relative flex w-[260px] shrink-0 flex-col overflow-hidden border-r border-sidebar-border bg-sidebar px-4 pt-10 pb-7',
+        className,
+      )}
     >
       <NeonWaves className="absolute bottom-24 -left-10 h-72 w-[340px] opacity-90" />
       <a href="#/" className="relative mb-14 px-3">
@@ -173,9 +176,9 @@ export function PageHeader({
 }) {
   return (
     <header className="relative mb-8">
-      <div className="mb-2 flex items-center justify-between gap-4">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
         {back ? (
-          <a href={href(back)} className="flex items-center gap-3 text-[19px] text-white/90 hover:text-white">
+          <a href={href(back)} className="flex items-center gap-3 text-[17px] text-white/90 hover:text-white md:text-[19px]">
             <ArrowLeft className="size-6" strokeWidth={1.6} /> {backLabel}
           </a>
         ) : (
@@ -184,8 +187,8 @@ export function PageHeader({
         <SystemStatus />
       </div>
       <div className={cn(align === 'center' && 'text-center')}>
-        <h1 className="text-[44px] leading-[1.15] font-semibold tracking-tight text-white">{title}</h1>
-        {subtitle && <p className="mt-2 text-[18px] text-white/80">{subtitle}</p>}
+        <h1 className="text-[30px] leading-[1.15] font-semibold tracking-tight text-white md:text-[44px]">{title}</h1>
+        {subtitle && <p className="mt-2 text-[16px] text-white/80 md:text-[18px]">{subtitle}</p>}
       </div>
     </header>
   )
@@ -218,12 +221,50 @@ export function Layout({ current, children }: { current: Route; children: ReactN
   const pageKey = 'id' in current ? `${current.page}-${current.id}` : current.page
   const [slot, setSlot] = useState<HTMLElement | null>(null)
   const [bottomActive, setActive] = useState(false)
+  // Téléphone et petite tablette : menu replié derrière un bouton, refermé à chaque changement de page
+  const [menuMobile, setMenuMobile] = useState(false)
+  const [pagePrecedente, setPagePrecedente] = useState(pageKey)
+  if (pagePrecedente !== pageKey) {
+    setPagePrecedente(pageKey)
+    setMenuMobile(false)
+  }
   return (
     <BottomSlotContext.Provider value={{ slot, setActive }}>
     <div className="flex h-svh flex-col overflow-hidden bg-background text-foreground">
+    <div className="flex items-center justify-between border-b border-sidebar-border bg-sidebar px-4 py-3 md:hidden">
+      <a href="#/" aria-label="Accueil">
+        <Logo />
+      </a>
+      <button type="button" onClick={() => setMenuMobile(true)} aria-label="Ouvrir le menu" className="p-2 text-white">
+        <Menu className="size-6" />
+      </button>
+    </div>
+    <AnimatePresence>
+      {menuMobile && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="fixed inset-0 z-40 flex bg-black/60 md:hidden"
+          onClick={() => setMenuMobile(false)}
+        >
+          <div onClick={(e) => e.stopPropagation()} className="relative h-full">
+            <Sidebar current={current} footer className="h-full" />
+            <button
+              type="button"
+              onClick={() => setMenuMobile(false)}
+              aria-label="Fermer le menu"
+              className="absolute top-3 right-3 p-2 text-white/80 hover:text-white"
+            >
+              <X className="size-5" />
+            </button>
+          </div>
+        </motion.div>
+      )}
+    </AnimatePresence>
     <div className="flex min-h-0 flex-1">
-      <Sidebar current={current} footer={!bottomActive} />
-      <main className="relative flex-1 overflow-y-auto">
+      <Sidebar current={current} footer={!bottomActive} className="hidden md:flex" />
+      <main className="relative min-w-0 flex-1 overflow-y-auto">
         <NeonWaves flip className="absolute -top-16 right-0 h-64 w-[520px] opacity-40" />
         <AnimatePresence mode="wait">
           <motion.div
@@ -232,7 +273,7 @@ export function Layout({ current, children }: { current: Route; children: ReactN
             initial="hidden"
             animate="visible"
             exit="exit"
-            className="relative mx-auto max-w-[1400px] px-10 pt-8 pb-10"
+            className="relative mx-auto max-w-[1400px] px-4 pt-5 pb-10 md:px-10 md:pt-8"
           >
             {children}
           </motion.div>

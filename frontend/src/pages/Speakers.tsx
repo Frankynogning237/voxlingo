@@ -183,7 +183,7 @@ function CarteLocuteur({
             <Clock3 className="size-4" /> Durée de parole : {formatDuree(loc.duree_s)} ({loc.part} %)
           </p>
         </div>
-        <div className="grid min-w-[300px] flex-1 gap-4 lg:grid-cols-2">
+        <div className="grid min-w-0 flex-1 gap-4 sm:min-w-[300px] lg:grid-cols-2">
           <MiniPlayer src={speakerAudioUrl(job.id, loc.code, 'original')} couleur="#a855f7" libelle="Voix originale" />
           <MiniPlayer
             src={srcDoublee}
@@ -375,7 +375,7 @@ export function Speakers({ id }: { id: string }) {
           size="lg"
           disabled={occupe || generer.isPending || !job?.moteur_traduction}
           onClick={() => generer.mutate()}
-          className="h-14 min-w-64"
+          className="h-14 w-full sm:w-auto sm:min-w-64"
           title="Seules les phrases dont la voix ou le texte a changé sont refaites"
         >
           <Mic className="size-5" /> Générer les voix

@@ -137,7 +137,7 @@ export function Settings() {
         subtitle="Personnalisez VoxLingo selon vos besoins."
       />
 
-      <motion.div variants={staggerVariants} initial="hidden" animate="visible" className="grid gap-6 xl:grid-cols-2">
+      <motion.div variants={staggerVariants} initial="hidden" animate="visible" className="grid gap-6 *:min-w-0 xl:grid-cols-2">
         <Carte icone={<Cpu className="size-7" strokeWidth={1.5} />} titre="Matériel">
           <p className={cn('mb-4 flex items-center gap-2.5 text-[16px]', gpu ? 'text-success' : 'text-warning')}>
             {gpu ? <CircleCheck className="size-5 fill-success text-[#0e1119]" /> : <TriangleAlert className="size-5" />}
@@ -148,7 +148,7 @@ export function Settings() {
               <p className="mb-2 flex items-center gap-2 text-[14px] text-white/85">
                 Mémoire vidéo (VRAM) <Aide texte="Mémoire de la carte graphique utilisée par les modèles d'IA." />
               </p>
-              <div className="flex items-center gap-4">
+              <div className="flex flex-wrap items-center gap-4">
                 <Jauge valeur={materiel.vram_utilisee_go} max={materiel.vram_totale_go} />
                 <span className="text-[14px] text-white tabular-nums">
                   {materiel.vram_utilisee_go.toFixed(1)} / {materiel.vram_totale_go.toFixed(1)} Go
@@ -280,8 +280,8 @@ export function Settings() {
 
         <div className="xl:col-span-2">
           <Carte icone={<SlidersHorizontal className="size-7" strokeWidth={1.5} />} titre="Doublage par défaut">
-            <div className="grid gap-x-10 gap-y-4 lg:grid-cols-2">
-              <label className="flex items-center gap-4">
+            <div className="grid gap-x-10 gap-y-4 *:min-w-0 lg:grid-cols-2">
+              <label className="flex flex-wrap items-center gap-4">
                 <span className="flex flex-1 items-center gap-2 text-[15px] text-white">
                   Reformuler plutôt qu'accélérer <Aide texte="Une phrase trop longue est reformulée plus brièvement par l'IA, pour garder une voix naturelle." />
                 </span>
@@ -291,19 +291,19 @@ export function Settings() {
                   label="Reformuler plutôt qu'accélérer"
                 />
               </label>
-              <label className="flex items-center gap-4">
+              <label className="flex flex-wrap items-center gap-4">
                 <span className="flex flex-1 items-center gap-2 text-[15px] text-white">
                   Générer les sous-titres <Aide texte="Fichier .srt dans la langue cible." />
                 </span>
                 <Switch checked={valeurs.sous_titres} onChange={(v) => set('sous_titres', v)} label="Générer les sous-titres" />
               </label>
-              <label className="flex items-center gap-4">
+              <label className="flex flex-wrap items-center gap-4">
                 <span className="flex flex-1 items-center gap-2 text-[15px] text-white">
                   Conserver le fond sonore <Aide texte="Musique et ambiance d'origine sous la nouvelle voix." />
                 </span>
                 <Switch checked={valeurs.conserver_fond} onChange={(v) => set('conserver_fond', v)} label="Conserver le fond sonore" />
               </label>
-              <div className="flex items-center gap-4">
+              <div className="flex flex-wrap items-center gap-4">
                 <span className="text-[15px] text-white">Volume du fond</span>
                 <Slider value={valeurs.volume_fond} onChange={(v) => set('volume_fond', v)} label="Volume du fond par défaut" />
                 <span className="w-12 text-right text-[15px] text-white tabular-nums">{valeurs.volume_fond} %</span>
@@ -330,7 +330,7 @@ export function Settings() {
           )}
         </AnimatePresence>
         <span className="flex-1" />
-        <PrimaryButton size="lg" disabled={!modifie || enregistrer.isPending} onClick={() => enregistrer.mutate(valeurs)} className="min-w-72">
+        <PrimaryButton size="lg" disabled={!modifie || enregistrer.isPending} onClick={() => enregistrer.mutate(valeurs)} className="w-full sm:w-auto sm:min-w-72">
           <Check className="size-5" /> Enregistrer les paramètres
         </PrimaryButton>
       </div>
