@@ -112,7 +112,20 @@ def _sous_progression(report: Callable[[float], None], debut: float, fin: float)
     return lambda fraction: report(debut + (fin - debut) * fraction)
 
 
+def _consignes(job_id: str):
+    """Glossaire et consignes de traduction du projet (options « glossaire » et « consignes »)."""
+    from pipeline.translate import consignes_du_projet
+
+    options = (jobs.read_status(job_id) or {}).get("options") or {}
+    return consignes_du_projet(options.get("glossaire", ""), options.get("consignes", ""))
+
+
 def _do_translate(job_id: str, report: Callable[[float], None], ids: set[int] | None = None) -> None:
+    with _consignes(job_id):
+        _traduire(job_id, report, ids)
+
+
+def _traduire(job_id: str, report: Callable[[float], None], ids: set[int] | None = None) -> None:
     """Traduit les segments (tous, ou seulement `ids`), puis ajuste les phrases trop longues si l'option est active."""
     status = jobs.read_status(job_id)
     source, cible = status["langue_source"], status["langue_cible"]
@@ -168,6 +181,11 @@ def _retraduire_selection(job_id: str, data: dict, ids: set[int], source: str, c
 
 
 def _do_adjust(job_id: str, ids: set[int] | None, report: Callable[[float], None]) -> None:
+    with _consignes(job_id):
+        _ajuster(job_id, ids, report)
+
+
+def _ajuster(job_id: str, ids: set[int] | None, report: Callable[[float], None]) -> None:
     """Ajuste les phrases trop longues après les modifications de l'utilisateur."""
     status = jobs.read_status(job_id)
     data = jobs.read_segments(job_id)

@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import gc
 import json
+from contextlib import contextmanager
+from contextvars import ContextVar
 import logging
 import re
 from collections.abc import Callable
@@ -97,6 +99,53 @@ def ollama_disponible(modele: str) -> bool:
     return True
 
 
+# ───────────────────────── Glossaire et consignes du projet ─────────────────────────
+
+LONGUEUR_MAX_CONSIGNES = 3000  # caractères : au-delà, le contexte du petit modèle déborde
+_CONSIGNES: ContextVar[str] = ContextVar("consignes_du_projet", default="")
+
+
+def lire_glossaire(texte: str) -> list[tuple[str, str]]:
+    """« terme = traduction » (ou « → », « -> », « : »), une entrée par ligne ; le reste est ignoré."""
+    entrees = []
+    for ligne in (texte or "").splitlines():
+        for separateur in ("=", "→", "->", ":"):
+            if separateur in ligne:
+                terme, _, traduction = ligne.partition(separateur)
+                if terme.strip() and traduction.strip():
+                    entrees.append((terme.strip(), traduction.strip()))
+                break
+    return entrees
+
+
+def formater_consignes(glossaire: str, consignes: str) -> str:
+    """Bloc ajouté aux demandes de traduction : glossaire imposé et consignes de style."""
+    lignes = []
+    entrees = lire_glossaire(glossaire)
+    if entrees:
+        lignes.append("Glossary imposed by the user (always translate these terms exactly like this):")
+        lignes += [f'- "{terme}" -> "{traduction}"' for terme, traduction in entrees]
+    if consignes and consignes.strip():
+        lignes.append("Style instructions from the user (follow them):")
+        lignes.append(consignes.strip())
+    return "\n".join(lignes)[:LONGUEUR_MAX_CONSIGNES]
+
+
+@contextmanager
+def consignes_du_projet(glossaire: str = "", consignes: str = ""):
+    """Pendant le bloc, chaque traduction et chaque reformulation suit le glossaire et les consignes."""
+    jeton = _CONSIGNES.set(formater_consignes(glossaire, consignes))
+    try:
+        yield
+    finally:
+        _CONSIGNES.reset(jeton)
+
+
+def _avec_consignes(lignes: list[str]) -> list[str]:
+    bloc = _CONSIGNES.get()
+    return [bloc, "", *lignes] if bloc else lignes
+
+
 SYSTEM_PROMPT = (
     "You are a professional subtitle and dubbing translator. You translate ONE line of a video "
     "transcript at a time. Rules: (1) keep the exact meaning; (2) keep the register and tone "
@@ -132,7 +181,7 @@ def _prompt(segments: list[dict[str, Any]], i: int, source: str, cible: str,
         f"Target length: about {syllabes} syllables "
         f"(between {max(1, round(syllabes * 0.85))} and {round(syllabes * 1.15)}).",
     ]
-    return "\n".join(lignes)
+    return "\n".join(_avec_consignes(lignes))
 
 
 def _normaliser(texte: str) -> str:
@@ -208,13 +257,13 @@ SHORTEN_PROMPT = (
 def raccourcir(client: httpx.Client, modele: str, original: str, traduction: str,
                source: str, cible: str, syllabes_max: int) -> str:
     """Demande au modèle une version plus courte de la traduction (au plus `syllabes_max` syllabes)."""
-    prompt = "\n".join([
+    prompt = "\n".join(_avec_consignes([
         f"Source language: {LANGUAGE_NAMES.get(source, source)}",
         f"Target language: {LANGUAGE_NAMES.get(cible, cible)}",
         f'Original line: "{original}"',
         f'Current translation (too long): "{traduction}"',
         f"Maximum length: {syllabes_max} syllables.",
-    ])
+    ]))
     reponse = client.post(
         "/api/chat",
         json={

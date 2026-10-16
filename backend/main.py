@@ -17,7 +17,7 @@ from pathlib import Path
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 import jobs
 from config import get_runtime, get_settings
@@ -186,6 +186,8 @@ async def create_job(
     ajuster_trop_longs: bool = Form(True),
     strategie_duree: Literal["reformuler", "accelerer"] = Form("reformuler"),
     voix_bibliotheque: bool = Form(False),
+    glossaire: str = Form("", max_length=5000),
+    consignes: str = Form("", max_length=2000),
     debut_s: float | None = Form(None, ge=0),
     fin_s: float | None = Form(None, gt=0),
 ) -> dict:
@@ -231,6 +233,8 @@ async def create_job(
         "ajuster_trop_longs": ajuster_trop_longs,
         "strategie_duree": strategie_duree,
         "voix_bibliotheque": voix_bibliotheque,
+        "glossaire": glossaire.strip(),
+        "consignes": consignes.strip(),
     }
     if debut_s is not None or fin_s is not None:
         # Raccourcir la vidéo : seul ce passage sera traité (coupe faite au début du traitement)
@@ -341,17 +345,23 @@ def reset_translations(job_id: str) -> dict:
 
 
 class ChoixStrategie(BaseModel):
-    strategie_duree: Literal["reformuler", "accelerer"]
+    strategie_duree: Literal["reformuler", "accelerer"] | None = None
+    glossaire: str | None = Field(None, max_length=5000)
+    consignes: str | None = Field(None, max_length=2000)
 
 
 @app.put("/jobs/{job_id}/options")
 def set_strategy(job_id: str, choix: ChoixStrategie) -> dict:
-    """Change la stratégie face aux phrases trop longues et recalcule les alertes."""
+    """Change la stratégie face aux phrases trop longues (et recalcule les alertes), ou le glossaire
+    et les consignes de traduction (appliqués à la prochaine traduction)."""
     status = _get_status_or_404(job_id)
     if status["etat"] in ("en_attente", "en_cours"):
         raise HTTPException(409, "Un traitement est en cours : attendez sa fin pour changer cette option.")
-    options = {**(status.get("options") or {}), "strategie_duree": choix.strategie_duree}
+    options = {**(status.get("options") or {}),
+               **{k: (v.strip() if isinstance(v, str) else v) for k, v in choix.model_dump(exclude_none=True).items()}}
     status = jobs.update_status(job_id, options=options)
+    if choix.strategie_duree is None:
+        return status
     if (jobs.project_dir(job_id) / "segments.json").is_file() and status.get("moteur_traduction"):
         data = jobs.read_segments(job_id)
         marquer_fin_max(data["segments"], status.get("duree_s"))

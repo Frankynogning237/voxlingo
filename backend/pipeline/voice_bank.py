@@ -117,6 +117,8 @@ VERSION_BIBLIOTHEQUE = 3
 
 TEXTE_APERCU = "Bonjour, voici un aperçu de ma voix pour vos doublages. J'espère qu'elle vous plaira !"
 SEUIL_SEXE_HZ = 165  # en dessous : voix plutôt masculine
+SEUIL_RECLASSEMENT_FEMME_HZ = 130  # « femme » mesurée plus bas : c'est en fait une voix d'homme
+SEUIL_RECLASSEMENT_HOMME_HZ = 190  # « homme » mesuré plus haut : c'est en fait une voix de femme
 SEUIL_ENFANT_HZ = 270  # au-dessus : voix d'enfant probable
 PENALITE_AGE_HZ = 25  # écart ajouté aux voix jeunes et seniors lors de l'attribution automatique
 _verrou = threading.Lock()
@@ -383,7 +385,11 @@ def generer_apercus() -> int:
         if voix["age"] == "adulte" and not voix.get("transformation"):
             # Le prénom d'une voix XTTS ne dit pas toujours son sexe : la hauteur mesurée tranche
             mesure = mesurer_f0(fichier_apercu(voix["id"]))
-            if mesure is not None and sexe_estime(mesure) != voix["sexe"]:
+            # Seulement en cas d'écart net : une femme à la voix grave (140-165 Hz) reste une femme
+            if mesure is not None and (
+                (voix["sexe"] == "femme" and mesure < SEUIL_RECLASSEMENT_FEMME_HZ)
+                or (voix["sexe"] == "homme" and mesure > SEUIL_RECLASSEMENT_HOMME_HZ)
+            ):
                 logger.warning("Voix %s (%s) : %s Hz, classée %s au lieu de %s", voix["nom"], voix["xtts"],
                                mesure, sexe_estime(mesure), voix["sexe"])
                 voix["sexe"] = sexe_estime(mesure)

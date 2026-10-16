@@ -88,6 +88,9 @@ export type JobOptions = {
   strategie_duree?: StrategieDuree
   /** Attribuer automatiquement une voix de la bibliothèque à chaque locuteur. */
   voix_bibliotheque?: boolean
+  /** Glossaire (« terme = traduction », une ligne par terme) et consignes de style de la traduction */
+  glossaire?: string
+  consignes?: string
   /** Raccourcir la vidéo : passage gardé (en secondes) */
   debut_s?: number
   fin_s?: number
@@ -252,6 +255,9 @@ export const duplicateJob = (id: string) => send<Job>(`/jobs/${id}/dupliquer`, '
 
 export const setStrategy = (id: string, strategie_duree: StrategieDuree) =>
   send<Job>(`/jobs/${id}/options`, 'PUT', { strategie_duree })
+/** Enregistre le glossaire et les consignes de traduction du projet. */
+export const setTranslationRules = (id: string, regles: { glossaire: string; consignes: string }) =>
+  send<Job>(`/jobs/${id}/options`, 'PUT', regles)
 
 /** Ajuste les phrases trop longues (toutes, ou seulement `ids`). */
 export const adjustTranslations = (id: string, ids?: number[]) =>

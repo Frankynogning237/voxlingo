@@ -24,6 +24,7 @@ import { useEffect, useRef, useState, type DragEvent, type ReactNode } from 'rea
 import { LogoMark, NeonWaves } from '@/components/Brand'
 import { LipsIcon, Panel, Slider, Switch } from '@/components/Controls'
 import { Flag } from '@/components/Flag'
+import { GlossaireConsignes } from '@/components/GlossaireConsignes'
 import { Gradient, PageHeader } from '@/components/Layout'
 import { PrimaryButton } from '@/components/PrimaryButton'
 import { createJob, getHealth, getSettings, type JobOptions } from '@/lib/api'
@@ -629,6 +630,23 @@ export function NewDubbing() {
               onChange={(v) => setOption('voix_bibliotheque', v)}
             />
           </div>
+        </motion.div>
+
+        <motion.div variants={cardVariants}>
+          <details className="group rounded-2xl border border-white/10 bg-white/[0.02] px-5 py-4">
+            <summary className="cursor-pointer list-none text-[16px] text-white marker:hidden">
+              <span className="mr-2 inline-block transition-transform group-open:rotate-90">›</span>
+              Glossaire et consignes de traduction <span className="text-[14px] text-white/55">(facultatif)</span>
+            </summary>
+            <div className="mt-4">
+              <GlossaireConsignes
+                glossaire={options.glossaire ?? ''}
+                consignes={options.consignes ?? ''}
+                onGlossaire={(v) => setOption('glossaire', v)}
+                onConsignes={(v) => setOption('consignes', v)}
+              />
+            </div>
+          </details>
         </motion.div>
 
         <motion.div variants={cardVariants} className="flex flex-wrap items-center gap-6 border-t border-white/5 pt-5">

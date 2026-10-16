@@ -4,6 +4,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import {
   ArrowLeft,
   ArrowRight,
+  BookText,
   Check,
   CircleCheck,
   EllipsisVertical,
@@ -23,6 +24,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { Panel, Switch } from '@/components/Controls'
 import { EditorTimeline, type PisteLocuteur } from '@/components/EditorTimeline'
+import { GlossaireConsignes } from '@/components/GlossaireConsignes'
 import { BottomPanel, SystemStatus, UserFooter } from '@/components/Layout'
 import { PrimaryButton } from '@/components/PrimaryButton'
 import {
@@ -37,6 +39,7 @@ import {
   type BilanAjustement,
   type StrategieDuree,
   setStrategy,
+  setTranslationRules,
   setSegmentSpeaker,
   setSegmentTone,
   type Ton,
@@ -479,6 +482,11 @@ export function TranslationEditor({ job }: { job: Job }) {
   const [originaux, setOriginaux] = useState<Record<number, string>>({})
   const [selection, setSelection] = useState<number | null>(null)
   const [confirmation, setConfirmation] = useState(false)
+  // Glossaire et consignes de traduction du projet
+  const [reglesOuvertes, setReglesOuvertes] = useState(false)
+  const [glossaire, setGlossaire] = useState(job.options.glossaire ?? '')
+  const [consignes, setConsignes] = useState(job.options.consignes ?? '')
+  const reglesModifiees = glossaire.trim() !== (job.options.glossaire ?? '') || consignes.trim() !== (job.options.consignes ?? '')
   const [message, setMessage] = useState<{ type: 'succes' | 'erreur'; texte: string } | null>(null)
 
   const segments = useMemo(() => data?.segments ?? [], [data])
@@ -590,6 +598,23 @@ export function TranslationEditor({ job }: { job: Job }) {
     },
     onError: (e) => notifier('erreur', (e as Error).message),
   })
+  const enregistrerRegles = useMutation({
+    // Enregistre le glossaire et les consignes, puis (sur demande) retraduit toutes les phrases
+    mutationFn: async (retraduireTout: boolean) => {
+      const j = await setTranslationRules(job.id, { glossaire: glossaire.trim(), consignes: consignes.trim() })
+      return retraduireTout ? retranslate(job.id) : j
+    },
+    onSuccess: (j, retraduireTout) => {
+      queryClient.setQueryData(['job', job.id], j)
+      if (retraduireTout) {
+        setBrouillon({})
+        setOriginaux({})
+        void queryClient.invalidateQueries({ queryKey: ['job', job.id] })
+      }
+      notifier('succes', retraduireTout ? 'Consignes enregistrées : nouvelle traduction en cours.' : 'Glossaire et consignes enregistrés.')
+    },
+    onError: (e) => notifier('erreur', (e as Error).message),
+  })
   const changerTon = useMutation({
     mutationFn: ({ segId, ton }: { segId: number; ton: Ton }) => setSegmentTone(job.id, segId, ton),
     onSuccess: (d) => queryClient.setQueryData(['segments', job.id], d),
@@ -600,7 +625,7 @@ export function TranslationEditor({ job }: { job: Job }) {
     onSuccess: (d) => queryClient.setQueryData(['segments', job.id], d),
     onError: (e) => notifier('erreur', (e as Error).message),
   })
-  const occupe = retraduireCorrigees.isPending || changerStrategie.isPending || ajuster.isPending || enregistrer.isPending || valider.isPending || reinitialiser.isPending || retraduire.isPending
+  const occupe = enregistrerRegles.isPending || retraduireCorrigees.isPending || changerStrategie.isPending || ajuster.isPending || enregistrer.isPending || valider.isPending || reinitialiser.isPending || retraduire.isPending
 
   // Le segment sous le curseur de lecture est mis en évidence dans le tableau
   const segmentLu = segments.find((s) => clock.temps >= s.debut && clock.temps < s.fin)
@@ -713,6 +738,19 @@ export function TranslationEditor({ job }: { job: Job }) {
         >
           <RotateCcw className="size-5" /> Réinitialiser
         </button>
+        <button
+          type="button"
+          onClick={() => setReglesOuvertes(!reglesOuvertes)}
+          aria-expanded={reglesOuvertes}
+          title="Termes imposés (noms, argot…) et style de la traduction"
+          className={cn(
+            'flex h-11 items-center gap-2.5 rounded-xl border px-5 text-[15px] text-white transition-colors duration-200',
+            reglesOuvertes ? 'border-violet-400/70 bg-violet-500/10' : 'border-white/15 hover:border-white/30',
+          )}
+        >
+          <BookText className="size-5 text-violet-300" /> Glossaire
+          {(job.options.glossaire || job.options.consignes) && <span className="size-2 rounded-full bg-violet-400" />}
+        </button>
         <a
           href={href({ page: 'locuteurs', id: job.id })}
           className="flex h-11 items-center gap-2.5 rounded-xl border border-white/15 px-5 text-[15px] text-white transition-colors duration-200 hover:border-white/30"
@@ -720,6 +758,50 @@ export function TranslationEditor({ job }: { job: Job }) {
           <UsersRound className="size-5" /> Locuteurs
         </a>
       </div>
+
+      <AnimatePresence initial={false}>
+        {reglesOuvertes && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={voxTransition(0.25)}
+            className="mb-4 overflow-hidden"
+          >
+            <Panel className="flex flex-col gap-4 px-5 py-4">
+              <GlossaireConsignes
+                glossaire={glossaire}
+                consignes={consignes}
+                onGlossaire={setGlossaire}
+                onConsignes={setConsignes}
+                disabled={occupe}
+              />
+              <div className="flex flex-wrap items-center justify-end gap-3">
+                <span className="mr-auto text-[13px] text-white/55">
+                  Suivis à chaque traduction, retraduction et reformulation de ce projet.
+                </span>
+                <button
+                  type="button"
+                  disabled={occupe || !reglesModifiees}
+                  onClick={() => enregistrerRegles.mutate(false)}
+                  className="h-10 rounded-xl border border-white/15 px-4 text-[14px] text-white hover:border-white/30 disabled:opacity-45"
+                >
+                  Enregistrer
+                </button>
+                <button
+                  type="button"
+                  disabled={occupe}
+                  onClick={() => enregistrerRegles.mutate(true)}
+                  title="Remplace toutes les traductions (y compris vos modifications) par une nouvelle traduction qui suit ces consignes"
+                  className="h-10 rounded-xl bg-brand-gradient px-4 text-[14px] font-medium text-white disabled:opacity-45"
+                >
+                  Enregistrer et retraduire tout
+                </button>
+              </div>
+            </Panel>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <AnimatePresence>
         {job.dernier_ajustement && cleBilan !== bilanVu && (
