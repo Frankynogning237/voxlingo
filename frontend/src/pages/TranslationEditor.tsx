@@ -19,6 +19,8 @@ import {
   Languages,
   Undo2,
   UsersRound,
+  RefreshCw,
+  Volume2,
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 
@@ -31,7 +33,9 @@ import {
   filmstripUrl,
   getSegments,
   getWaveform,
+  redoSegmentVoice,
   resetTranslations,
+  segmentVoiceUrl,
   retranslate,
   saveTranslations,
   validateTranslations,
@@ -318,6 +322,8 @@ function SegmentRow({
   onChangeOriginal,
   locuteurs,
   onSpeaker,
+  voixDoublee,
+  onRefaire,
 }: {
   seg: Segment
   langues: { source?: string | null; cible?: string | null; strategie: StrategieDuree }
@@ -336,6 +342,9 @@ function SegmentRow({
   original: string
   originalModifie: boolean
   onChangeOriginal: (v: string) => void
+  /** Voix doublée de la phrase (null tant qu'elle n'est pas générée) */
+  voixDoublee: string | null
+  onRefaire: () => void
 }) {
   const [menu, setMenu] = useState(false)
   const alerte = tropLong(seg, traduction, langues.strategie, langues.cible)
@@ -462,6 +471,32 @@ function SegmentRow({
                 className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-[14px] text-white hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 <Scissors className="size-4" /> Ajuster cette phrase
+              </button>
+              <button
+                type="button"
+                disabled={!voixDoublee}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  if (voixDoublee) void new Audio(voixDoublee).play()
+                  setMenu(false)
+                }}
+                title={voixDoublee ? undefined : "La voix de cette phrase n'est pas encore générée."}
+                className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-[14px] text-white hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <Volume2 className="size-4" /> Écouter la voix doublée
+              </button>
+              <button
+                type="button"
+                disabled={!voixDoublee}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  onRefaire()
+                  setMenu(false)
+                }}
+                title="Nouvelle prise de la voix de cette phrase seulement, puis la vidéo est réassemblée"
+                className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-[14px] text-white hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <RefreshCw className="size-4" /> Refaire la voix de cette phrase
               </button>
             </motion.div>
           )}
@@ -612,6 +647,20 @@ export function TranslationEditor({ job }: { job: Job }) {
         void queryClient.invalidateQueries({ queryKey: ['job', job.id] })
       }
       notifier('succes', retraduireTout ? 'Consignes enregistrées : nouvelle traduction en cours.' : 'Glossaire et consignes enregistrés.')
+    },
+    onError: (e) => notifier('erreur', (e as Error).message),
+  })
+  const refaire = useMutation({
+    // Les modifications en cours sont enregistrées : la nouvelle prise lit le texte affiché
+    mutationFn: async (segId: number) => {
+      if (modifications.length > 0) await saveTranslations(job.id, modifications)
+      return redoSegmentVoice(job.id, segId)
+    },
+    onSuccess: (j) => {
+      setBrouillon({})
+      setOriginaux({})
+      queryClient.setQueryData(['job', job.id], j)
+      void queryClient.invalidateQueries({ queryKey: ['job', job.id] })
     },
     onError: (e) => notifier('erreur', (e as Error).message),
   })
@@ -850,6 +899,8 @@ export function TranslationEditor({ job }: { job: Job }) {
                 original={originaux[seg.id] ?? seg.texte}
                 originalModifie={originalModifie(seg)}
                 onChangeOriginal={(v) => setOriginaux((o) => ({ ...o, [seg.id]: v }))}
+                voixDoublee={seg.voix_disponible ? segmentVoiceUrl(job.id, seg.id) : null}
+                onRefaire={() => refaire.mutate(seg.id)}
               />
             ))}
           </motion.div>

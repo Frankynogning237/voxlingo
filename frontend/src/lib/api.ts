@@ -145,6 +145,8 @@ export type Segment = {
   /** Ton de la phrase d'origine (phase 7), corrigeable */
   ton?: Ton
   ton_corrige?: boolean
+  /** Voix doublée de cette phrase déjà générée */
+  voix_disponible?: boolean
   /** Transcription corrigée à la main */
   texte_corrige?: boolean
   /** Texte d'origine corrigé depuis la dernière traduction : à retraduire */
@@ -182,6 +184,9 @@ export const downloadUrl = (id: string, quoi: 'download' | 'subtitles' | 'audio'
 export const subtitlesVttUrl = (id: string) => fichier(`/jobs/${id}/subtitles.vtt`)
 export const filmstripUrl = (id: string) => fichier(`/jobs/${id}/filmstrip`)
 export const getWaveform = (id: string) => request<number[]>(`/jobs/${id}/waveform`)
+/** Voix doublée d'une seule phrase, et nouvelle prise de cette phrase (puis réassemblage de la vidéo). */
+export const segmentVoiceUrl = (id: string, segId: number) => fichier(`/jobs/${id}/segments/${segId}/voix`)
+export const redoSegmentVoice = (id: string, segId: number) => send<Job>(`/jobs/${id}/segments/${segId}/refaire`, 'POST')
 
 export async function cancelJob(id: string): Promise<Job> {
   const res = await fetch(`${API_URL}/jobs/${id}/annuler`, { method: 'POST', headers: entetes() })

@@ -281,7 +281,50 @@ def get_segments(job_id: str) -> dict:
     data = jobs.read_segments(job_id)
     if data["segments"] and "fin_max" not in data["segments"][0]:
         marquer_fin_max(data["segments"], status.get("duree_s"))  # projets créés avant l'ajustement
+    from pipeline.voice import fichier_brut
+
+    dossier_voix = jobs.project_dir(job_id) / "voix"
+    for seg in data["segments"]:
+        seg["voix_disponible"] = fichier_brut(dossier_voix, seg["id"]).is_file()
     return data
+
+
+@app.get("/jobs/{job_id}/segments/{seg_id}/voix")
+def segment_voice(job_id: str, seg_id: int) -> FileResponse:
+    """Voix doublée d'une phrase (dernière génération), pour l'écouter seule."""
+    from pipeline.voice import fichier_brut
+
+    _get_status_or_404(job_id)
+    chemin = fichier_brut(jobs.project_dir(job_id) / "voix", seg_id)
+    if not chemin.is_file():
+        raise HTTPException(404, "La voix de cette phrase n'a pas encore été générée.")
+    return FileResponse(chemin, media_type="audio/wav")
+
+
+@app.post("/jobs/{job_id}/segments/{seg_id}/refaire")
+def redo_segment_voice(job_id: str, seg_id: int) -> dict:
+    """Refait la voix d'une seule phrase (nouvelle prise), puis réassemble la vidéo.
+    Les autres phrases, déjà à jour, sont gardées telles quelles."""
+    import json as _json
+
+    from pipeline.voice import fichier_brut
+
+    status = _get_status_or_404(job_id)
+    if status["etat"] in ("en_attente", "en_cours"):
+        raise HTTPException(409, "Un traitement est en cours : attendez sa fin.")
+    data = jobs.read_segments(job_id)
+    if not any(s["id"] == seg_id for s in data["segments"]):
+        raise HTTPException(404, "Phrase introuvable.")
+    dossier_voix = jobs.project_dir(job_id) / "voix"
+    fichier_brut(dossier_voix, seg_id).unlink(missing_ok=True)
+    manifeste = dossier_voix / "manifeste.json"
+    if manifeste.is_file():
+        entrees = _json.loads(manifeste.read_text(encoding="utf-8"))
+        entrees.pop(str(seg_id), None)
+        manifeste.write_text(_json.dumps(entrees, ensure_ascii=False, indent=1), encoding="utf-8")
+    status = jobs.update_status(job_id, traduction_validee=True, etat="en_attente")
+    jobs.start_voices(job_id)
+    return status
 
 
 class TraductionModifiee(BaseModel):
