@@ -88,6 +88,25 @@ def extraire_reference(video: Path, segments: list[dict[str, Any]], sortie: Path
     return sortie
 
 
+INTONATION_MIN_S, INTONATION_MAX_S = 1.2, 15.0  # extrait de phrase exploitable pour l'intonation
+
+
+def extraire_intonation(source: Path, seg: dict[str, Any], sortie: Path) -> Path | None:
+    """Extrait la phrase d'origine (voix isolée) qui guidera l'intonation de sa traduction."""
+    duree = seg["fin"] - seg["debut"]
+    if not INTONATION_MIN_S <= duree <= INTONATION_MAX_S:
+        return None
+    if not sortie.is_file():
+        resultat = subprocess.run(
+            [_require("ffmpeg"), "-y", "-v", "error", "-ss", f"{seg['debut']:.2f}", "-to", f"{seg['fin']:.2f}",
+             "-i", str(source), "-vn", "-ac", "1", "-ar", str(TAUX), "-af", "highpass=f=70", str(sortie)],
+            capture_output=True,
+        )
+        if resultat.returncode != 0 or not sortie.is_file():
+            return None
+    return sortie
+
+
 # ───────────────────────── Synthèse ─────────────────────────
 
 def _rogner_silences(wav: np.ndarray) -> np.ndarray:
@@ -108,7 +127,7 @@ class Manifeste:
             json.loads(self.chemin.read_text(encoding="utf-8")) if self.chemin.is_file() else {}
         )
 
-    CHAMPS = ("texte", "langue", "disponible", "voix", "ton")
+    CHAMPS = ("texte", "langue", "disponible", "voix", "ton", "intonation")
 
     @staticmethod
     def _cle(seg: dict[str, Any], langue: str, voix: str) -> dict[str, Any]:
@@ -116,7 +135,7 @@ class Manifeste:
         # si l'un des deux change, la phrase est refaite
         disponible = round(seg.get("fin_max", seg["fin"]) - seg["debut"], 2)
         return {"texte": seg["traduction"], "langue": langue, "disponible": disponible, "voix": voix,
-                "ton": seg.get("ton")}
+                "ton": seg.get("ton"), "intonation": True if seg.get("intonation") else None}
 
     def a_jour(self, seg: dict[str, Any], langue: str, voix: str, fichier: Path) -> bool:
         entree = self.donnees.get(str(seg["id"]), {})
@@ -185,6 +204,7 @@ def generer_voix(
                 "disponible": max(s.get("fin_max", s["fin"]) - s["debut"], 0.1),
                 "voix": voix[s["id"]],
                 "temperature": TEMPERATURE.get(s.get("ton") or "neutre", 0.7),
+                "intonation": s.get("intonation"),
             }
             for s in a_generer
         ],

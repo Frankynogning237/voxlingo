@@ -43,9 +43,20 @@ def main(chemin_tache: str) -> None:
     print("PRET", flush=True)
     conditionnements: dict[str, tuple] = {}
 
-    def conditionnement(voix: str) -> tuple:
-        """Empreinte de la voix, calculée une seule fois par voix."""
+    def conditionnement(voix: str, intonation: str | None = None) -> tuple:
+        """Empreinte de la voix, calculée une seule fois par voix.
+
+        Avec `intonation` (extrait de la phrase d'origine, voix clonées) : le timbre reste celui de
+        l'échantillon de référence, mais le style de diction (latents GPT) s'inspire de la phrase
+        d'origine, pour en garder l'émotion (colère, rire, chuchotement…)."""
         base = voix.split("|")[0]  # la transformation d'âge est appliquée après synthèse
+        if intonation:
+            cle = f"{voix}#{intonation}"
+            if cle not in conditionnements:
+                _, empreinte = conditionnement(voix)
+                latent, _ = modele.get_conditioning_latents(audio_path=[intonation, base.partition(":")[2]])
+                conditionnements[cle] = (latent, empreinte)
+            return conditionnements[cle]
         if voix not in conditionnements:
             genre, _, valeur = base.partition(":")
             if genre == "xtts":
@@ -55,8 +66,9 @@ def main(chemin_tache: str) -> None:
                 conditionnements[voix] = modele.get_conditioning_latents(audio_path=[valeur])
         return conditionnements[voix]
 
-    def lire(texte: str, voix: str, vitesse: float, temperature: float = 0.7) -> np.ndarray:
-        latent, empreinte = conditionnement(voix)
+    def lire(texte: str, voix: str, vitesse: float, temperature: float = 0.7,
+             intonation: str | None = None) -> np.ndarray:
+        latent, empreinte = conditionnement(voix, intonation)
         sortie = modele.inference(
             texte, tache["langue"], latent, empreinte,
             temperature=temperature, speed=vitesse, enable_text_splitting=True,
@@ -66,12 +78,12 @@ def main(chemin_tache: str) -> None:
     for seg in tache["segments"]:
         vitesse = seg["vitesse"]
         temperature = seg.get("temperature", 0.7)  # expressivité selon le ton de la phrase d'origine
-        wav = lire(seg["traduction"], seg["voix"], vitesse, temperature)
+        wav = lire(seg["traduction"], seg["voix"], vitesse, temperature, seg.get("intonation"))
         depassement = len(wav) / TAUX / seg["disponible"]
         if depassement > ACCELERATION_MAX and vitesse < VITESSE_XTTS_MAX:
             # Encore trop long : nouvel essai plus rapide, avec une petite marge
             vitesse = round(min(VITESSE_XTTS_MAX, vitesse * depassement / (ACCELERATION_MAX * 0.95)), 2)
-            wav = lire(seg["traduction"], seg["voix"], vitesse, temperature)
+            wav = lire(seg["traduction"], seg["voix"], vitesse, temperature, seg.get("intonation"))
         sf.write(fichier_brut(dossier, seg["id"]), wav, TAUX, subtype="PCM_16")
         print(f"FAIT {seg['id']} {vitesse}", flush=True)
 

@@ -88,6 +88,8 @@ export type JobOptions = {
   strategie_duree?: StrategieDuree
   /** Attribuer automatiquement une voix de la bibliothèque à chaque locuteur. */
   voix_bibliotheque?: boolean
+  /** Voix clonées : chaque phrase reprend l'intonation de la phrase d'origine */
+  intonation_originale?: boolean
   /** Glossaire (« terme = traduction », une ligne par terme) et consignes de style de la traduction */
   glossaire?: string
   consignes?: string

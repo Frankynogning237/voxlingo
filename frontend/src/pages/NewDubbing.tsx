@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   ArrowUp,
+  AudioLines,
   Captions,
   ChevronDown,
   CircleCheck,
@@ -518,6 +519,7 @@ export function NewDubbing() {
     ajuster_trop_longs: true,
     strategie_duree: 'reformuler',
     voix_bibliotheque: false,
+    intonation_originale: true,
   })
   // Valeurs par défaut choisies dans la page Paramètres (appliquées une seule fois)
   const { data: parametres } = useQuery({ queryKey: ['parametres'], queryFn: getSettings, retry: 0 })
@@ -662,6 +664,13 @@ export function NewDubbing() {
               aide="Activé : chaque personne de la vidéo reçoit automatiquement une voix différente de la bibliothèque (même sexe, registre le plus proche). Désactivé : la voix d'origine de chaque personne est clonée. Modifiable ensuite dans la page Locuteurs."
               checked={!!options.voix_bibliotheque}
               onChange={(v) => setOption('voix_bibliotheque', v)}
+            />
+            <OptionCard
+              icon={<AudioLines className="size-6" />}
+              label="Intonation de la phrase d'origine"
+              aide="Voix clonées : chaque phrase traduite reprend l'intonation de la phrase d'origine (colère, rire, chuchotement…), en gardant le timbre de la personne. Désactivé : intonation plus neutre et régulière."
+              checked={options.intonation_originale !== false}
+              onChange={(v) => setOption('intonation_originale', v)}
             />
           </div>
         </motion.div>

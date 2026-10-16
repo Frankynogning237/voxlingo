@@ -186,6 +186,7 @@ async def create_job(
     ajuster_trop_longs: bool = Form(True),
     strategie_duree: Literal["reformuler", "accelerer"] = Form("reformuler"),
     voix_bibliotheque: bool = Form(False),
+    intonation_originale: bool = Form(True),
     glossaire: str = Form("", max_length=5000),
     consignes: str = Form("", max_length=2000),
     debut_s: float | None = Form(None, ge=0),
@@ -233,6 +234,7 @@ async def create_job(
         "ajuster_trop_longs": ajuster_trop_longs,
         "strategie_duree": strategie_duree,
         "voix_bibliotheque": voix_bibliotheque,
+        "intonation_originale": intonation_originale,
         "glossaire": glossaire.strip(),
         "consignes": consignes.strip(),
     }
@@ -667,6 +669,7 @@ CHOIX_TRADUCTION = [
     {"valeur": "auto", "libelle": "Automatique"},
     {"valeur": "qwen2.5:3b", "libelle": "Qwen 2.5 3B (rapide)"},
     {"valeur": "qwen2.5:7b", "libelle": "Qwen 2.5 7B (meilleure qualité)"},
+    {"valeur": "qwen2.5:14b", "libelle": "Qwen 2.5 14B (la meilleure, GPU conseillé)"},
     {"valeur": "nllb", "libelle": "NLLB-200 (sans Ollama)"},
 ]
 
