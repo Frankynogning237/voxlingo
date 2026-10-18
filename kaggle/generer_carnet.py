@@ -129,7 +129,8 @@ for outil in ("torchcodec",) + FACULTATIFS:
 # Chatterbox (voix plus expressive) : il exige PyTorch 2.6, d'où un environnement Python à part (uv).
 # Installé en arrière-plan (≈ 5 min) : le moteur l'utilise dès qu'il est prêt, XTTS en attendant.
 CHATTERBOX_PYTHON = "/tmp/chatterbox/bin/python"
-en_cours = subprocess.run("pgrep -f 'chatterbox-tts'", shell=True, capture_output=True).returncode == 0
+# « chatterbox[-]tts » : le motif ne se reconnaît pas lui-même dans la liste des processus
+en_cours = subprocess.run("pgrep -f 'chatterbox[-]tts'", shell=True, capture_output=True).returncode == 0
 if not Path("/tmp/chatterbox/.pret").exists() and not en_cours:  # relance : on reprend une installation ratée
     subprocess.Popen(f"{sys.executable} -m pip install -q uv && uv venv -q --allow-existing -p 3.11 /tmp/chatterbox"
                      f" && uv pip install -q -p {CHATTERBOX_PYTHON} chatterbox-tts && touch /tmp/chatterbox/.pret",
