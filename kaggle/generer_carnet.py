@@ -139,6 +139,15 @@ if not Path("/tmp/chatterbox/.pret").exists() and not en_cours:  # relance : on 
                      start_new_session=True)
     print("Chatterbox : installation lancée en arrière-plan (journal : /tmp/chatterbox.log)")
 
+# MuseTalk (synchronisation labiale dans le moteur) : Python 3.10 et PyTorch 2.0, environnement à part,
+# installé en arrière-plan (≈ 10 min) par kaggle/installer_musetalk.sh
+MUSETALK_PYTHON, MUSETALK_DIR = "/tmp/musetalk/env/bin/python", "/tmp/musetalk/code"
+en_cours = subprocess.run("pgrep -f 'installer[_]musetalk'", shell=True, capture_output=True).returncode == 0
+if not Path(MUSETALK_DIR, ".pret").exists() and not en_cours:
+    subprocess.Popen(["bash", str(CODE / "kaggle" / "installer_musetalk.sh")], stdout=open("/tmp/musetalk.log", "w"),
+                     stderr=subprocess.STDOUT, start_new_session=True)
+    print("MuseTalk : installation lancée en arrière-plan (journal : /tmp/musetalk.log)")
+
 run("curl -fsSL https://ollama.com/install.sh | sh")
 subprocess.run("pkill -f 'ollama serve'", shell=True)  # relance : un seul Ollama
 # start_new_session : interrompre une cellule (bouton ■) n'arrête pas ce service
@@ -172,6 +181,8 @@ env = os.environ | {
     "MODELE_VISION": MODELE_VISION or "aucun",
     "COQUI_TOS_AGREED": "1",
     "CHATTERBOX_PYTHON": CHATTERBOX_PYTHON,
+    "MUSETALK_PYTHON": MUSETALK_PYTHON,
+    "MUSETALK_DIR": MUSETALK_DIR,
     "LD_LIBRARY_PATH": ":".join(libs + [os.environ.get("LD_LIBRARY_PATH", "")]),
 }
 if HF := secret("HF_TOKEN"):

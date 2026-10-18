@@ -563,7 +563,25 @@ async def import_lipsync(job_id: str, video: UploadFile = File(...)) -> dict:
     recue.unlink(missing_ok=True)
     apercu_navigateur(cible, dossier / "apercu_synchro.mp4")
     jobs.update_step(job_id, "synchro_labiale", etat="termine")
-    return jobs.update_status(job_id, synchro_importee=True)
+    return jobs.update_status(job_id, synchro_importee=True, synchro_moteur=False)
+
+
+@app.post("/jobs/{job_id}/synchroniser")
+def lipsync_engine(job_id: str) -> dict:
+    """Synchronise les lèvres avec le moteur lui-même (MuseTalk sur GPU), sans passer par Kaggle à la main."""
+    from pipeline.lipsync import musetalk_disponible
+
+    status = _get_status_or_404(job_id)
+    if status["etat"] in ("en_attente", "en_cours"):
+        raise HTTPException(409, "Un traitement est en cours : attendez sa fin.")
+    if not (jobs.project_dir(job_id) / "doublage.wav").is_file():
+        raise HTTPException(409, "Générez d'abord les voix du projet.")
+    if not musetalk_disponible():
+        raise HTTPException(409, "La synchronisation labiale par le moteur demande un GPU (Kaggle/Colab) et "
+                                 "MuseTalk installé : utilisez le carnet Kaggle ci-dessous.")
+    status = jobs.update_status(job_id, etat="en_attente")
+    jobs.start_lipsync(job_id)
+    return status
 
 
 @app.delete("/jobs/{job_id}/synchro")
@@ -574,7 +592,7 @@ def remove_lipsync(job_id: str) -> dict:
         fichier.unlink()
     (jobs.project_dir(job_id) / "apercu_synchro.mp4").unlink(missing_ok=True)
     jobs.update_step(job_id, "synchro_labiale", etat="kaggle")
-    return jobs.update_status(job_id, synchro_importee=False)
+    return jobs.update_status(job_id, synchro_importee=False, synchro_moteur=False)
 
 
 def _video_finale(job_id: str, status: dict) -> Path:
@@ -1218,6 +1236,12 @@ def delete_voice(voix_id: str) -> dict:
     return {"supprime": voix_id}
 
 
+def _musetalk_disponible() -> bool:
+    from pipeline.lipsync import musetalk_disponible
+
+    return musetalk_disponible()
+
+
 @app.get("/health")
 def health() -> dict:
     """État du système : matériel, mode, modèles choisis et outils."""
@@ -1237,7 +1261,7 @@ def health() -> dict:
         "modeles": {
             "transcription": runtime.whisper_model,
             "traduction": runtime.ollama_model,
-            "synchro_labiale_locale": runtime.lipsync_local,
+            "synchro_labiale_locale": _musetalk_disponible(),  # synchro faite par le moteur (MuseTalk)
         },
         "langues_cibles": get_settings().target_languages,
         "nom_utilisateur": get_settings().nom_utilisateur,

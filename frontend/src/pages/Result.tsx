@@ -31,9 +31,19 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 
 import { LipsIcon, Panel } from '@/components/Controls'
 import { LangueTag } from '@/components/Flag'
-import { Gradient, PageHeader } from '@/components/Layout'
+import { Gradient, PageHeader, useHealth } from '@/components/Layout'
 import { OutlineButton, PrimaryButton } from '@/components/PrimaryButton'
-import { downloadUrl, dubbedUrl, importLipsync, kaggleUrl, removeLipsync, subtitlesVttUrl, videoUrl, type Job } from '@/lib/api'
+import {
+  downloadUrl,
+  dubbedUrl,
+  importLipsync,
+  kaggleUrl,
+  lipsyncEngine,
+  removeLipsync,
+  subtitlesVttUrl,
+  videoUrl,
+  type Job,
+} from '@/lib/api'
 import { formatDuree } from '@/lib/format'
 import { href, navigate } from '@/lib/router'
 import { cn } from '@/lib/utils'
@@ -279,10 +289,17 @@ function Comparateur({ job, piste, setPiste }: { job: Job; piste: Piste; setPist
   )
 }
 
-/** Synchronisation labiale sur le GPU gratuit de Kaggle : paquet à télécharger, vidéo à réimporter. */
+/** Synchronisation labiale : par le moteur s'il a un GPU (MuseTalk), sinon sur Kaggle à la main
+ * (paquet à télécharger, vidéo à réimporter). */
 function SynchroLabiale({ job }: { job: Job }) {
   const queryClient = useQueryClient()
   const fichier = useRef<HTMLInputElement>(null)
+  const { data: sante } = useHealth()
+  const parMoteur = !!sante?.modeles.synchro_labiale_locale
+  const synchroniser = useMutation({
+    mutationFn: () => lipsyncEngine(job.id),
+    onSuccess: (j) => queryClient.setQueryData(['job', job.id], j),
+  })
   const importer = useMutation({
     mutationFn: (f: File) => importLipsync(job.id, f),
     onSuccess: (j) => queryClient.setQueryData(['job', job.id], j),
@@ -300,13 +317,40 @@ function SynchroLabiale({ job }: { job: Job }) {
           <p className="flex items-center gap-3 text-[20px] font-semibold text-white">
             <LipsIcon className="size-6" /> Synchronisation labiale
             {job.synchro_importee && (
-              <span className="rounded-full bg-success px-3 py-0.5 text-[13px] font-medium text-black">Appliquée</span>
+              <span className="rounded-full bg-success px-3 py-0.5 text-[13px] font-medium text-black">
+                {job.synchro_moteur ? 'Appliquée par le moteur' : 'Appliquée'}
+              </span>
             )}
           </p>
           <p className="mt-1 text-[14px] text-white/75">
-            Fait correspondre les lèvres à la nouvelle voix. Sans carte NVIDIA, le calcul se fait gratuitement sur Kaggle
-            (environ 30 h de GPU par semaine).
+            Fait correspondre les lèvres à la nouvelle voix, sur les passages où un visage parle.
+            {parMoteur
+              ? ' Votre moteur a un GPU : il le fait lui-même avec MuseTalk (quelques minutes par minute de vidéo).'
+              : ' Sans carte NVIDIA, le calcul se fait gratuitement sur Kaggle (environ 30 h de GPU par semaine).'}
           </p>
+          {parMoteur && (
+            <div className="mt-4 flex flex-col gap-2">
+              <button
+                type="button"
+                onClick={() => synchroniser.mutate()}
+                disabled={synchroniser.isPending}
+                className="flex h-12 w-full max-w-md items-center justify-center gap-2.5 rounded-2xl bg-brand-gradient text-[15px] text-white disabled:opacity-60"
+              >
+                <LipsIcon className="size-5" />
+                {synchroniser.isPending
+                  ? 'Lancement…'
+                  : job.synchro_moteur && job.synchro_importee
+                    ? 'Refaire la synchronisation avec le moteur'
+                    : 'Synchroniser les lèvres avec le moteur'}
+              </button>
+              {(synchroniser.error || job.synchro_erreur) && (
+                <p className="text-[13px] text-destructive">
+                  {synchroniser.error ? (synchroniser.error as Error).message : `Dernier essai : ${job.synchro_erreur}`}
+                </p>
+              )}
+              <p className="mt-2 text-[13px] text-white/55">Ou, sans GPU, avec le carnet Kaggle :</p>
+            </div>
+          )}
           <ol className="mt-4 flex flex-col gap-2">
             {etapes.map((e) => (
               <li key={e.n} className="flex items-start gap-3 text-[14px] text-white/90">

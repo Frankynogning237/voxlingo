@@ -122,6 +122,8 @@ export type Job = {
   voix_generees?: number
   nb_locuteurs?: number
   synchro_importee?: boolean
+  synchro_moteur?: boolean // synchronisation labiale faite par le moteur (MuseTalk)
+  synchro_erreur?: string | null
   debut_traitement: string | null
   fin_traitement: string | null
   cree_le: string
@@ -475,5 +477,7 @@ export async function importLipsync(id: string, video: File): Promise<Job> {
   return res.json()
 }
 export const removeLipsync = (id: string) => send<Job>(`/jobs/${id}/synchro`, 'DELETE')
+/** Synchronisation labiale par le moteur lui-même (GPU Kaggle/Colab, MuseTalk). */
+export const lipsyncEngine = (id: string) => send<Job>(`/jobs/${id}/synchroniser`, 'POST')
 
 export const LIBELLES_AGE: Record<AgeVoix, string> = { enfant: 'Enfant', jeune: 'Jeune', adulte: 'Adulte', senior: 'Senior' }

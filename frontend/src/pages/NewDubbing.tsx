@@ -633,7 +633,11 @@ export function NewDubbing() {
             <OptionCard
               icon={<LipsIcon className="size-7" />}
               label="Synchronisation labiale"
-              aide="Fait correspondre les lèvres au nouvel audio. Sans carte NVIDIA, elle passe par Kaggle (phase 8)."
+              aide={
+                health?.modeles.synchro_labiale_locale
+                  ? "Fait correspondre les lèvres au nouvel audio : le moteur (GPU) le fait lui-même avec MuseTalk, après l'export."
+                  : 'Fait correspondre les lèvres au nouvel audio. Sans GPU, elle passe par le carnet Kaggle (écran Résultat).'
+              }
               checked={options.synchro_labiale}
               onChange={(v) => setOption('synchro_labiale', v)}
             />

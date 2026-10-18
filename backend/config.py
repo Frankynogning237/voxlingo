@@ -84,6 +84,9 @@ class Settings(BaseSettings):
     hf_depot_sauvegarde: str | None = None
     # Python de l'environnement séparé de Chatterbox (voix plus expressive, PyTorch 2.6) ; vide = XTTS seul
     chatterbox_python: str | None = None
+    # Synchronisation labiale dans le moteur (MuseTalk 1.5, environnement séparé installé par le carnet)
+    musetalk_python: str | None = None
+    musetalk_dir: str | None = None
 
     # Accès à distance (moteur sur Kaggle/Colab, interface sur Vercel).
     # Clé d'accès : si elle est définie, chaque requête doit la fournir.

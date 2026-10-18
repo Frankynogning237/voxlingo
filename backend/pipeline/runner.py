@@ -32,6 +32,7 @@ WEIGHTS: dict[str, int] = {
     "traduction": 20,
     "voix": 40,
     "export": 10,
+    "synchro_labiale": 0,  # facultative (moteur sur GPU) : suivie par sa propre progression
 }
 
 
@@ -568,9 +569,53 @@ def run_voices(job_id: str) -> None:
     def body() -> None:
         _run_step(job_id, "voix", lambda report: _do_voices(job_id, report))
         _run_step(job_id, "export", lambda report: _do_export(job_id, report))
-        # Sans carte NVIDIA ≥ 8 Go, la synchronisation labiale se fait sur Kaggle (kaggle/lipsync_kaggle.ipynb)
-        options = (jobs.read_status(job_id) or {}).get("options") or {}
-        jobs.update_step(job_id, "synchro_labiale", etat="kaggle" if options.get("synchro_labiale") else "ignore")
         jobs.update_status(job_id, synchro_importee=False)  # la piste a changé : l'ancienne synchro n'est plus valable
+        options = (jobs.read_status(job_id) or {}).get("options") or {}
+        if not options.get("synchro_labiale"):
+            jobs.update_step(job_id, "synchro_labiale", etat="ignore")
+        else:
+            _synchro_labiale(job_id)
 
     _guarded(job_id, body, etat_final="termine")
+
+
+def _synchro_labiale(job_id: str) -> None:
+    """Synchronisation labiale par le moteur (MuseTalk, GPU) ; sinon, ou si elle échoue, elle reste à
+    faire avec le carnet Kaggle manuel (écran Résultat). Un échec ne fait jamais échouer le doublage."""
+    from pipeline.lipsync import musetalk_disponible
+
+    if not musetalk_disponible():
+        jobs.update_step(job_id, "synchro_labiale", etat="kaggle")
+        return
+    try:
+        _run_step(job_id, "synchro_labiale", lambda report: _do_lipsync(job_id, report))
+    except jobs.JobCancelled:
+        raise
+    except Exception as exc:
+        logger.exception("[%s] Synchronisation labiale", job_id)
+        jobs.update_step(job_id, "synchro_labiale", etat="kaggle")
+        jobs.update_status(job_id, synchro_erreur=str(exc) or exc.__class__.__name__)
+
+
+def _do_lipsync(job_id: str, report: Callable[[float], None]) -> None:
+    from pipeline.extract import probe_duration
+    from pipeline.format import apercu_navigateur, conformer
+    from pipeline.lipsync import synchroniser
+
+    status = jobs.read_status(job_id)
+    folder = jobs.project_dir(job_id)
+    video = folder / status["fichier"]
+    data = jobs.read_segments(job_id)
+    resultat = synchroniser(video, folder / "doublage.wav", data["segments"], probe_duration(video), folder, report)
+    for ancienne in folder.glob("doublage_synchro.*"):
+        ancienne.unlink()
+    cible = conformer(resultat, video, folder / f"doublage_synchro{video.suffix.lower()}")
+    resultat.unlink(missing_ok=True)
+    apercu_navigateur(cible, folder / "apercu_synchro.mp4")
+    jobs.update_status(job_id, synchro_importee=True, synchro_moteur=True, synchro_erreur=None)
+
+
+def run_lipsync(job_id: str) -> None:
+    """Synchronisation labiale demandée après coup depuis l'écran Résultat (moteur sur GPU)."""
+    jobs.update_status(job_id, synchro_erreur=None)
+    _guarded(job_id, lambda: _synchro_labiale(job_id), etat_final="termine")
