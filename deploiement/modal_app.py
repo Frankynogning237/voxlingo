@@ -3,10 +3,11 @@
 Déploiement, depuis la racine du dépôt (une fois, puis après chaque mise à jour du code) :
     pip install modal
     modal token new                                    # connexion au compte Modal (navigateur)
-    modal secret create voxlingo CLE_ACCES=<votre mot de passe> [HF_TOKEN=hf_…]
+    modal secret create voxlingo CLE_ACCES=<votre mot de passe> HF_TOKEN=hf_…   # les deux facultatifs
     modal deploy deploiement/modal_app.py
 L'adresse affichée (https://<compte>--voxlingo-moteur-moteur-web.modal.run) se colle dans VoxLingo,
-fenêtre « Connexion au moteur », avec la clé CLE_ACCES.
+fenêtre « Connexion au moteur », avec la clé : CLE_ACCES, ou, sans elle, la clé tirée au hasard au premier
+démarrage et écrite dans les journaux de l'application (modal.com → Apps → voxlingo-moteur → Logs).
 
 Fonctionnement :
 - un seul conteneur GPU (T4), allumé à la première requête (≈ 1 à 2 min) et tant que l'interface
@@ -75,7 +76,16 @@ class Moteur:
     @modal.enter()
     def demarrer(self) -> None:
         if not os.environ.get("CLE_ACCES"):
-            raise RuntimeError("Ajoutez CLE_ACCES au secret Modal « voxlingo » (voir l'en-tête de ce fichier).")
+            # Pas de clé dans le secret : une clé tirée au hasard une fois, gardée sur le volume
+            import secrets
+
+            fichier = Path(os.environ["DATA_DIR"]) / ".cle"
+            if not fichier.is_file():
+                fichier.parent.mkdir(parents=True, exist_ok=True)
+                fichier.write_text(secrets.token_urlsafe(18), encoding="utf-8")
+                volume.commit()
+            os.environ["CLE_ACCES"] = fichier.read_text(encoding="utf-8").strip()
+            print(f"Clé d'accès du moteur (à coller dans VoxLingo) : {os.environ['CLE_ACCES']}", flush=True)
         Path(os.environ["OLLAMA_MODELS"]).mkdir(parents=True, exist_ok=True)
         self.ollama = subprocess.Popen(["ollama", "serve"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
