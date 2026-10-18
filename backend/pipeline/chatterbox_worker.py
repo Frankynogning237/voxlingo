@@ -58,7 +58,12 @@ def main(chemin_tache: str) -> None:
     import soundfile as sf
     import torch
     import torchaudio.functional as F
+    import perth
     from chatterbox.mtl_tts import ChatterboxMultilingualTTS
+
+    if perth.PerthImplicitWatermarker is None:  # sinon : « 'NoneType' object is not callable »
+        raise RuntimeError("filigrane audio (perth) indisponible : installez « setuptools<81 » "
+                           "dans l'environnement de Chatterbox")
 
     tache = json.loads(Path(chemin_tache).read_text(encoding="utf-8"))
     dossier = Path(tache["dossier"])

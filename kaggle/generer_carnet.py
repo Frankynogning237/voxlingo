@@ -127,13 +127,14 @@ for outil in ("torchcodec",) + FACULTATIFS:
     print(f"  {outil} :", "installé" if r.returncode == 0 else "non installé (le moteur s'en passera)")
 
 # Chatterbox (voix plus expressive) : il exige PyTorch 2.6, d'où un environnement Python à part (uv).
+# setuptools : son filigrane audio (perth) importe pkg_resources, absent d'un environnement uv neuf.
 # Installé en arrière-plan (≈ 5 min) : le moteur l'utilise dès qu'il est prêt, XTTS en attendant.
 CHATTERBOX_PYTHON = "/tmp/chatterbox/bin/python"
 # « chatterbox[-]tts » : le motif ne se reconnaît pas lui-même dans la liste des processus
 en_cours = subprocess.run("pgrep -f 'chatterbox[-]tts'", shell=True, capture_output=True).returncode == 0
 if not Path("/tmp/chatterbox/.pret").exists() and not en_cours:  # relance : on reprend une installation ratée
     subprocess.Popen(f"{sys.executable} -m pip install -q uv && uv venv -q --allow-existing -p 3.11 /tmp/chatterbox"
-                     f" && uv pip install -q -p {CHATTERBOX_PYTHON} chatterbox-tts && touch /tmp/chatterbox/.pret",
+                     f" && uv pip install -q -p {CHATTERBOX_PYTHON} chatterbox-tts 'setuptools<81' && touch /tmp/chatterbox/.pret",
                      shell=True, stdout=open("/tmp/chatterbox.log", "w"), stderr=subprocess.STDOUT,
                      start_new_session=True)
     print("Chatterbox : installation lancée en arrière-plan (journal : /tmp/chatterbox.log)")

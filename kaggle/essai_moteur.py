@@ -44,7 +44,7 @@ if _pret.exists():
     _etape("Chatterbox déjà installé")
 elif _sp.run("pgrep -f 'chatterbox[-]tts'", shell=True, capture_output=True).returncode != 0:
     _sp.Popen(f"{sys.executable} -m pip install -q uv && uv venv -q --allow-existing -p 3.11 /tmp/chatterbox"
-              " && uv pip install -q -p /tmp/chatterbox/bin/python chatterbox-tts && touch /tmp/chatterbox/.pret",
+              " && uv pip install -q -p /tmp/chatterbox/bin/python chatterbox-tts 'setuptools<81' && touch /tmp/chatterbox/.pret",
               shell=True, stdout=open("/tmp/chatterbox.log", "w"), stderr=_sp.STDOUT, start_new_session=True)
     _etape("Chatterbox : installation lancée en arrière-plan")
 
