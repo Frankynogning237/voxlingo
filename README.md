@@ -265,8 +265,9 @@ permanent**, donc projets, voix et modèles ne sont plus effacés à la fin de l
 4. coller l'adresse affichée (`https://<compte>--voxlingo-moteur-moteur-web.modal.run`) et la clé dans VoxLingo.
 
 Le moteur s'allume à la première requête (≈ 1 à 2 min), reste allumé tant que l'interface est ouverte et
-s'éteint 20 min après : éteint, il ne coûte rien. **Gardez l'interface ouverte pendant un doublage** (la
-fermer l'interrompt au bout de 20 min). Projets, voix et modèles sont sur le volume Modal `voxlingo-stockage`.
+s'éteint 5 min après : éteint, il ne coûte rien. **Gardez l'interface ouverte pendant un doublage** (la
+fermer l'interrompt au bout de 5 min). Pour rester dans les crédits gratuits : *Settings → Usage & Billing* →
+**Spend limit** à 0 $ (Modal exige une carte pour les GPU, mais ne prélève rien au-delà de cette limite). Projets, voix et modèles sont sur le volume Modal `voxlingo-stockage`.
 
 **Lightning AI** (Studio avec disque permanent ; crédits gratuits à l'inscription) et **toute machine Linux
 avec GPU NVIDIA** (RunPod, Vast.ai, serveur personnel) — `deploiement/lancer_moteur.py`

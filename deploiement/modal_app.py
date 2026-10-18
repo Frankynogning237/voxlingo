@@ -11,7 +11,7 @@ démarrage et écrite dans les journaux de l'application (modal.com → Apps →
 
 Fonctionnement :
 - un seul conteneur GPU (T4), allumé à la première requête (≈ 1 à 2 min) et tant que l'interface
-  est ouverte : elle interroge le moteur toutes les quelques secondes. Il s'éteint 20 min après la
+  est ouverte : elle interroge le moteur toutes les quelques secondes. Il s'éteint 5 min après la
   dernière requête, et ne coûte rien éteint. Fermer l'interface pendant un doublage l'interrompt ;
 - projets, modèles téléchargés (Whisper, XTTS, Ollama…) et bibliothèque de voix sont sur un volume
   Modal permanent : rien n'est perdu d'une séance à l'autre ;
@@ -69,7 +69,7 @@ app = modal.App("voxlingo-moteur", image=image)
     volumes={STOCKAGE: volume},
     secrets=[modal.Secret.from_name("voxlingo")],
     max_containers=1,  # un seul moteur : les doublages en cours vivent dans ce conteneur
-    scaledown_window=20 * 60,  # éteint 20 min après la dernière requête
+    scaledown_window=5 * 60,  # éteint 5 min après la dernière requête (économise les crédits)
     timeout=24 * 3600,
 )
 @modal.concurrent(max_inputs=100)
