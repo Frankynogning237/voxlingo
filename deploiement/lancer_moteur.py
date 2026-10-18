@@ -9,6 +9,8 @@ Usage, depuis le dossier du dépôt cloné :
 Réglages facultatifs (variables d'environnement) :
     VOXLINGO_CLE          clé d'accès (sinon tirée au hasard une fois, puis gardée dans le dossier des données)
     VOXLINGO_STOCKAGE     dossier permanent (défaut : le dossier qui contient le dépôt)
+    VOXLINGO_DONNEES, VOXLINGO_MODELES, VOXLINGO_OUTILS   un dossier pour chacun (Kaggle : modèles et outils
+                          dans /tmp, plus grand que le dossier de travail limité à 20 Go)
     MODELE_TRADUCTION     modèle Ollama (défaut : qwen2.5:14b) ; MODELE_VISION (défaut : qwen2.5vl:7b)
     ADRESSE_VERCEL        adresse de l'interface (défaut : https://voxlingo-gray.vercel.app)
     HF_TOKEN, HF_TOKEN_ECRITURE, HF_DEPOT_SAUVEGARDE   comme dans le carnet Kaggle
@@ -29,7 +31,9 @@ from urllib.parse import quote
 
 CODE = Path(__file__).resolve().parent.parent
 STOCKAGE = Path(os.environ.get("VOXLINGO_STOCKAGE") or CODE.parent)
-DONNEES, MODELES, OUTILS = STOCKAGE / "voxlingo-donnees", STOCKAGE / "voxlingo-modeles", STOCKAGE / "voxlingo-outils"
+DONNEES = Path(os.environ.get("VOXLINGO_DONNEES") or STOCKAGE / "voxlingo-donnees")
+MODELES = Path(os.environ.get("VOXLINGO_MODELES") or STOCKAGE / "voxlingo-modeles")
+OUTILS = Path(os.environ.get("VOXLINGO_OUTILS") or STOCKAGE / "voxlingo-outils")
 ADRESSE_VERCEL = os.environ.get("ADRESSE_VERCEL", "https://voxlingo-gray.vercel.app")
 MODELE_TRADUCTION = os.environ.get("MODELE_TRADUCTION", "qwen2.5:14b")
 MODELE_VISION = os.environ.get("MODELE_VISION", "qwen2.5vl:7b")
@@ -118,7 +122,7 @@ def cle_acces() -> str:
     return fichier.read_text(encoding="utf-8").strip()
 
 
-def demarrer_moteur(cle: str) -> subprocess.Popen:
+def demarrer_moteur(cle: str) -> subprocess.Popen | None:
     import httpx
 
     libs = []  # bibliothèques CUDA fournies par pip (cuBLAS, cuDNN), pour faster-whisper
@@ -139,6 +143,14 @@ def demarrer_moteur(cle: str) -> subprocess.Popen:
         r = subprocess.run([sys.executable, "-m", "sauvegarde", "restaurer"], cwd=CODE / "backend", text=True,
                            capture_output=True, env=env | {"HF_HUB_DISABLE_PROGRESS_BARS": "1"})
         etape("Sauvegarde : " + masquer((r.stdout.strip() or r.stderr.strip()[-1000:]) or "aucune réponse"))
+    try:  # relance pendant un doublage : on garde le moteur en marche plutôt que d'interrompre le traitement
+        occupes = [j["id"] for j in httpx.get("http://127.0.0.1:8000/jobs", headers={"X-Cle-Acces": cle},
+                                              timeout=5).json() if j["etat"] in ("en_cours", "en_attente")]
+    except Exception:
+        occupes = []
+    if occupes:
+        etape(f"Doublage en cours ({', '.join(occupes)}) : le moteur déjà lancé est gardé tel quel.")
+        return None
     subprocess.run("pkill -f 'uvicorn main:app'", shell=True)  # relance : l'ancien moteur laisse la place
     time.sleep(2)
     moteur = en_arriere_plan([sys.executable, "-m", "uvicorn", "main:app", "--host", "127.0.0.1", "--port", "8000"],
@@ -175,23 +187,37 @@ def tunnel() -> str:
     raise RuntimeError("Le tunnel n'a pas démarré (journal : /tmp/tunnel.log).")
 
 
-def main() -> None:
-    etape(f"Code : {CODE} · stockage permanent : {STOCKAGE}")
+def lien_de_connexion(adresse: str, cle: str) -> str:
+    return f"{ADRESSE_VERCEL.rstrip('/')}/?moteur={quote(adresse, safe='')}&cle={quote(cle, safe='')}#/"
+
+
+def lancer() -> tuple[subprocess.Popen | None, str, str]:
+    """Installe ce qui manque, démarre le moteur et le tunnel. Renvoie (moteur, adresse, clé)."""
+    etape(f"Code : {CODE} · données : {DONNEES} · modèles : {MODELES}")
     installer()
     cle = cle_acces()
     moteur = demarrer_moteur(cle)
-    adresse = tunnel()
-    lien = f"{ADRESSE_VERCEL.rstrip('/')}/?moteur={quote(adresse, safe='')}&cle={quote(cle, safe='')}#/"
-    print(f"\n✅ Moteur en ligne : {adresse}\n👉 Ouvrez ce lien (il contient la clé, gardez-le pour vous) :\n{lien}\n",
-          flush=True)
+    return moteur, tunnel(), cle
+
+
+def suivre(moteur: subprocess.Popen | None) -> None:
+    """Affiche l'état du moteur chaque minute (garde aussi une séance Kaggle/Colab active)."""
     try:
         while True:
             time.sleep(60)
-            etat = "en marche" if moteur.poll() is None else "ARRÊTÉ"
+            en_marche = moteur.poll() is None if moteur is not None else tourne("uvicorn main:app")
+            etat = "en marche" if en_marche else "ARRÊTÉ"
             derniere = (open("/tmp/voxlingo.log", errors="replace").read().strip().splitlines() or [""])[-1]
             print(time.strftime("%H:%M"), "· moteur", etat, "·", masquer(derniere)[-150:], flush=True)
     except KeyboardInterrupt:
         print("Suivi arrêté (le moteur et le tunnel restent lancés).")
+
+
+def main() -> None:
+    moteur, adresse, cle = lancer()
+    print(f"\n✅ Moteur en ligne : {adresse}\n👉 Ouvrez ce lien (il contient la clé, gardez-le pour vous) :\n"
+          f"{lien_de_connexion(adresse, cle)}\n", flush=True)
+    suivre(moteur)
 
 
 if __name__ == "__main__":

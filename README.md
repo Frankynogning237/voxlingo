@@ -209,12 +209,15 @@ gratuit de Kaggle (≈ 30 h/semaine) ou de Colab, joignable grâce à un tunnel 
    (projet `voxlingo` de l'espace gratuit *stupora*). Pour la republier après une modification :
    `cd frontend` puis `npx vercel deploy --prod`.
 
-**Moteur sur Kaggle (à chaque séance)**
-1. kaggle.com → *Create → New Notebook → File → Import Notebook* → `kaggle/moteur_voxlingo.ipynb` ;
+**Moteur sur Kaggle**
+1. une seule fois : kaggle.com → *Create → New Notebook → File → Import Notebook* → `kaggle/moteur_voxlingo.ipynb`.
+   Le carnet n'est qu'un lanceur : il récupère la dernière version du code à chaque *Run All* et exécute
+   `kaggle/demarrer.py` (logique dans `deploiement/lancer_moteur.py`) ; **inutile de le réimporter** après une
+   mise à jour ;
 2. une seule fois : vérifier son téléphone (*Settings* du compte), puis dans le carnet *GPU T4 x2*, *Internet On*,
    et le secret `GITHUB_TOKEN` (jeton GitHub *fine-grained*, lecture seule du contenu de `voxlingo`) ;
    conseillé : le secret `HF_TOKEN_ECRITURE` pour la sauvegarde automatique (voir plus bas) ;
-3. renseigner `ADRESSE_VERCEL` dans la première cellule → *Run All* (≈ 10 min) ;
+3. à chaque séance : *Run All* (≈ 10 min ; `ADRESSE_VERCEL` et les modèles se règlent dans la première cellule) ;
 4. ouvrir le lien affiché : l'interface Vercel se connecte toute seule au moteur (adresse et clé mémorisées).
 
 Le même carnet fonctionne sur Colab (*Fichier → Importer*, secret dans l'icône 🔑). Le moteur exige une **clé
@@ -246,8 +249,8 @@ place avant de démarrer le moteur (module `backend/sauvegarde.py`).
    dans la première cellule du carnet. Il est visible sur `https://huggingface.co/datasets/votre-compte/voxlingo-sauvegarde`.
 
 Bon à savoir : un projet supprimé dans l'interface l'est aussi de la sauvegarde ; les paquets Kaggle (`.zip`)
-ne sont pas copiés ; la dernière cellule (facultative) du carnet force une sauvegarde complète avant de
-fermer. Le jeton n'est jamais affiché dans le carnet ni dans les journaux. En local, la sauvegarde reste
+ne sont pas copiés. Pour forcer une sauvegarde complète avant de fermer, exécuter dans une cellule du carnet :
+`import subprocess; subprocess.run([sys.executable, "-c", "import sauvegarde; sauvegarde.instance().tout_sauvegarder()"], cwd=CODE / "backend")`. Le jeton n'est jamais affiché dans le carnet ni dans les journaux. En local, la sauvegarde reste
 désactivée tant que `HF_TOKEN_ECRITURE` n'est pas défini dans `.env`.
 
 ## Autres GPU gratuits : Lightning AI, Modal, toute machine Linux
