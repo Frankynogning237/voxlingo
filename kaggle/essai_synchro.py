@@ -2,7 +2,7 @@
 
     exec(open(CODE / "kaggle" / "essai_synchro.py", encoding="utf-8").read())
 
-Double la vidéo de démonstration de MuseTalk (≈ 11 s un visage qui parle, de face)
+Double la vidéo de démonstration de MuseTalk (≈ 11 s, un visage qui parle, de face)
 avec l'option « Synchronisation labiale », puis affiche le résultat. Tout se passe sur le serveur ;
 la clé d'accès reste dans le carnet (variable CLE).
 """
