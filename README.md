@@ -250,6 +250,37 @@ ne sont pas copiés ; la dernière cellule (facultative) du carnet force une sau
 fermer. Le jeton n'est jamais affiché dans le carnet ni dans les journaux. En local, la sauvegarde reste
 désactivée tant que `HF_TOKEN_ECRITURE` n'est pas défini dans `.env`.
 
+## Autres GPU gratuits : Lightning AI, Modal, toute machine Linux
+
+Le carnet Kaggle n'est pas la seule possibilité. Deux autres moteurs se branchent de la même façon sur
+l'interface Vercel (adresse + clé dans la fenêtre **Connexion au moteur**). Leur avantage : un **disque
+permanent**, donc projets, voix et modèles ne sont plus effacés à la fin de la séance.
+
+**Modal** (≈ 30 $ de crédits gratuits chaque mois, soit ≈ 50 h de GPU T4) — `deploiement/modal_app.py`
+1. modal.com → *Sign up* (compte gratuit), puis sur votre PC : `pip install modal` et `modal token new`
+   (connexion dans le navigateur) ;
+2. `modal secret create voxlingo CLE_ACCES=<votre mot de passe> HF_TOKEN=<votre jeton Hugging Face>` ;
+3. depuis le dossier du projet : `modal deploy deploiement/modal_app.py` (la première fois ≈ 15 min :
+   construction de l'image avec Chatterbox et MuseTalk ; refaire après chaque mise à jour du code) ;
+4. coller l'adresse affichée (`https://<compte>--voxlingo-moteur-moteur-web.modal.run`) et la clé dans VoxLingo.
+
+Le moteur s'allume à la première requête (≈ 1 à 2 min), reste allumé tant que l'interface est ouverte et
+s'éteint 20 min après : éteint, il ne coûte rien. **Gardez l'interface ouverte pendant un doublage** (la
+fermer l'interrompt au bout de 20 min). Projets, voix et modèles sont sur le volume Modal `voxlingo-stockage`.
+
+**Lightning AI** (Studio avec disque permanent ; crédits gratuits à l'inscription) et **toute machine Linux
+avec GPU NVIDIA** (RunPod, Vast.ai, serveur personnel) — `deploiement/lancer_moteur.py`
+1. lightning.ai → *Sign up* → créer un *Studio* et choisir un GPU (T4 ou L4) ;
+2. dans le terminal du Studio : `git clone https://<jeton GitHub>@github.com/Frankynogning237/voxlingo.git`
+   (jeton en lecture seule, comme pour Kaggle) puis `cd voxlingo` ;
+3. `python deploiement/lancer_moteur.py` : il installe tout (≈ 10 min la première fois, ensuite ≈ 1 min),
+   lance le moteur et un tunnel, puis affiche le lien à ouvrir.
+
+Projets, modèles et outils sont gardés à côté du dépôt (`voxlingo-donnees`, `voxlingo-modeles`,
+`voxlingo-outils`), la clé d'accès aussi : le lien reste valable d'une séance à l'autre tant que le tunnel
+tourne. Réglages possibles : `VOXLINGO_CLE`, `VOXLINGO_STOCKAGE`, `MODELE_TRADUCTION`, `HF_TOKEN`,
+`HF_TOKEN_ECRITURE` (voir l'en-tête du script).
+
 ## Tests
 
 ```powershell
