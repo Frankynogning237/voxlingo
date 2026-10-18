@@ -59,8 +59,14 @@ def run(commande: str) -> str:
     return r.stdout
 
 
+def motif_pgrep(motif: str) -> str:
+    """« ollama serve » → « [o]llama serve » : le motif ne se reconnaît plus lui-même dans la liste des
+    processus (sinon pgrep trouve toujours le shell qui le lance)."""
+    return motif if "[" in motif else f"[{motif[0]}]{motif[1:]}"
+
+
 def tourne(motif: str) -> bool:
-    return subprocess.run(f"pgrep -f '{motif}'", shell=True, capture_output=True).returncode == 0
+    return subprocess.run(f"pgrep -f '{motif_pgrep(motif)}'", shell=True, capture_output=True).returncode == 0
 
 
 def en_arriere_plan(commande: list[str] | str, journal: str, **options) -> subprocess.Popen:
@@ -105,7 +111,10 @@ def installer() -> None:
     if not tourne("ollama serve"):
         en_arriere_plan(["ollama", "serve"], "/tmp/ollama.log",
                         env=os.environ | {"OLLAMA_MODELS": str(MODELES / "ollama")})
-        time.sleep(5)
+    for _ in range(30):  # le serveur met quelques secondes à répondre
+        if subprocess.run("ollama list", shell=True, capture_output=True).returncode == 0:
+            break
+        time.sleep(2)
     for modele in (MODELE_TRADUCTION, MODELE_VISION):
         etape(f"Modèle {modele} (téléchargé une seule fois)…")
         run(f"OLLAMA_MODELS={MODELES / 'ollama'} ollama pull {modele}")
