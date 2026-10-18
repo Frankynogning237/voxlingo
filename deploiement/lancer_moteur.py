@@ -71,9 +71,10 @@ def en_arriere_plan(commande: list[str] | str, journal: str, **options) -> subpr
 
 def installer() -> None:
     sudo = "" if os.geteuid() == 0 else "sudo -n "
-    if not shutil.which("ffmpeg"):
-        etape("Installation de FFmpeg…")
-        run(f"{sudo}apt-get -qq update && {sudo}apt-get -qq install -y ffmpeg zstd lshw > /dev/null")
+    manquants = [outil for outil in ("ffmpeg", "zstd", "lshw") if not shutil.which(outil)]
+    if manquants:  # zstd : indispensable à l'installation d'Ollama ; lshw : détection du GPU par Ollama
+        etape(f"Installation de {', '.join(manquants)}…")
+        run(f"{sudo}apt-get -qq update && {sudo}apt-get -qq install -y {' '.join(manquants)} > /dev/null")
     etape("Dépendances Python (quelques minutes la première fois)…")
     # PyTorch déjà installé avec CUDA : on le fige pour que pip ne le remplace pas par une version CPU
     run(f"{sys.executable} -m pip freeze | grep -iE '^(torch|torchaudio|torchvision)==' > /tmp/contraintes.txt || true")
