@@ -40,7 +40,8 @@ _requirements = [l for l in (RACINE / "backend" / "requirements.txt").read_text(
 
 image = (
     modal.Image.from_registry("nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04", add_python="3.11")
-    .apt_install("ffmpeg", "git", "curl", "wget", "zstd", "lshw", "rubberband-cli")
+    # build-essential et clang : certains paquets se compilent à l'installation (diffq, pour RoFormer)
+    .apt_install("ffmpeg", "git", "curl", "wget", "zstd", "lshw", "rubberband-cli", "build-essential", "clang")
     .pip_install(*(l.split("#")[0].strip() for l in _requirements))
     # Outils facultatifs : le moteur s'en passe si l'un d'eux ne s'installe pas
     .run_commands(*(f"pip install -q '{outil}' || echo '{outil} non installé'" for outil in ("torchcodec",) + FACULTATIFS))
