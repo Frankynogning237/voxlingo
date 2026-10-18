@@ -52,26 +52,47 @@ class VoiceError(RuntimeError):
 
 # ───────────────────────── Échantillon de référence ─────────────────────────
 
-def extraire_reference(video: Path, segments: list[dict[str, Any]], sortie: Path) -> Path:
-    """Assemble 6 à 15 s de voix d'origine (les phrases les plus longues) en un échantillon propre."""
-    import soundfile as sf
+MARGE_CHEVAUCHEMENT_S = 0.2  # un extrait qui touche la parole d'un autre locuteur n'est pas « propre »
+NIVEAU_REFERENCE_DB = -20.0  # niveau commun des extraits de l'échantillon (voix ni trop faible, ni saturée)
 
-    candidats = sorted(
-        (s for s in segments if 1.5 <= s["fin"] - s["debut"] <= 12),
-        key=lambda s: s["fin"] - s["debut"],
-        reverse=True,
-    ) or sorted(segments, key=lambda s: s["fin"] - s["debut"], reverse=True)
+
+def choisir_extraits(segments: list[dict[str, Any]], autres: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
+    """Phrases du locuteur qui composeront l'échantillon de clonage (6 à 15 s, dans l'ordre du film).
+
+    On privilégie les phrases de 1,5 à 12 s où **personne d'autre ne parle** (`autres` : phrases des
+    autres locuteurs) : une voix superposée brouillerait l'empreinte et donc le timbre cloné. À défaut,
+    les phrases qui chevauchent sont acceptées, puis toutes les phrases."""
+    def propre(seg: dict[str, Any]) -> bool:
+        return not any(a["debut"] < seg["fin"] + MARGE_CHEVAUCHEMENT_S and a["fin"] > seg["debut"] - MARGE_CHEVAUCHEMENT_S
+                       for a in autres or [])
+
+    longueur = lambda s: s["fin"] - s["debut"]  # noqa: E731
+    bonnes = [s for s in segments if 1.5 <= longueur(s) <= 12]
+    candidats = (sorted((s for s in bonnes if propre(s)), key=longueur, reverse=True)
+                 + sorted((s for s in bonnes if not propre(s)), key=longueur, reverse=True)
+                 ) or sorted(segments, key=longueur, reverse=True)
     choisis, total = [], 0.0
     for seg in candidats:
-        if total >= REFERENCE_MIN_S + 2 or total + (seg["fin"] - seg["debut"]) > REFERENCE_MAX_S:
+        if total >= REFERENCE_MIN_S + 2 or total + longueur(seg) > REFERENCE_MAX_S:
             continue
         choisis.append(seg)
-        total += seg["fin"] - seg["debut"]
+        total += longueur(seg)
+    return sorted(choisis, key=lambda s: s["debut"])
+
+
+def extraire_reference(video: Path, segments: list[dict[str, Any]], sortie: Path,
+                       autres: list[dict[str, Any]] | None = None) -> Path:
+    """Assemble 6 à 15 s de voix d'origine du locuteur en un échantillon propre, au niveau homogène."""
+    import soundfile as sf
+
+    from pipeline.niveau import niveau_actif_db
+
+    choisis = choisir_extraits(segments, autres)
     if not choisis:
         raise VoiceError("Aucune parole exploitable pour cloner la voix.")
 
     morceaux = []
-    for seg in sorted(choisis, key=lambda s: s["debut"]):
+    for seg in choisis:
         resultat = subprocess.run(
             [_require("ffmpeg"), "-v", "error", "-ss", f"{seg['debut']:.2f}", "-to", f"{seg['fin']:.2f}",
              "-i", str(video), "-vn", "-ac", "1", "-ar", str(TAUX), "-af", "highpass=f=70",
@@ -79,12 +100,17 @@ def extraire_reference(video: Path, segments: list[dict[str, Any]], sortie: Path
             capture_output=True,
         )
         if resultat.returncode == 0 and resultat.stdout:
-            morceaux.append(np.frombuffer(resultat.stdout, dtype=np.int16))
-            morceaux.append(np.zeros(int(0.25 * TAUX), dtype=np.int16))  # courte pause entre extraits
+            extrait = np.frombuffer(resultat.stdout, dtype=np.int16).astype(np.float32) / 32768
+            niveau = niveau_actif_db(extrait, TAUX)
+            if niveau is not None:  # chaque extrait au même niveau : une empreinte vocale cohérente
+                extrait = extrait * 10 ** ((NIVEAU_REFERENCE_DB - niveau) / 20)
+            morceaux.append(np.clip(extrait, -0.98, 0.98))
+            morceaux.append(np.zeros(int(0.25 * TAUX), dtype=np.float32))  # courte pause entre extraits
     if not morceaux:
         raise VoiceError("Impossible d'extraire l'échantillon de voix d'origine.")
     sf.write(sortie, np.concatenate(morceaux), TAUX, subtype="PCM_16")
-    logger.info("Échantillon de référence : %.1f s (%d extraits)", total, len(choisis))
+    logger.info("Échantillon de référence : %.1f s (%d extraits)",
+                sum(s["fin"] - s["debut"] for s in choisis), len(choisis))
     return sortie
 
 

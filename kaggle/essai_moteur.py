@@ -18,6 +18,17 @@ from pathlib import Path as _Path
 
 import httpx as _httpx
 
+# Carnet lanceur (kaggle/demarrer.py) : les outils viennent de deploiement/lancer_moteur.py
+if "run" not in globals() or "DONNEES" not in globals():
+    import os as _os
+    import sys as _sys
+
+    _sys.path.insert(0, str(CODE / "deploiement"))
+    import lancer_moteur as _lm
+
+    run, masquer, sys = _lm.run, _lm.masquer, _sys
+    DONNEES = _Path(_os.environ.get("VOXLINGO_DONNEES", "/kaggle/working/voxlingo-donnees"))
+
 _api = _httpx.Client(base_url="http://127.0.0.1:8000", headers={"X-Cle-Acces": CLE}, timeout=120)
 _essai = _Path("/tmp/essai")
 _essai.mkdir(exist_ok=True)
@@ -124,8 +135,27 @@ _sortie = DONNEES / "projects" / _id / "doublage.mp4"
 if _sortie.is_file():
     _duree = run(f"ffprobe -v error -show_entries format=duration -of csv=p=0 {_sortie}").strip()
     _etape(f"Vidéo doublée : {_sortie.stat().st_size // 1024} Ko, {_duree} s")
+
+# Fidélité : niveau de chaque phrase d'origine et niveau obtenu par la voix doublée
+_sys_path = str(CODE / "backend")
+if _sys_path not in sys.path:
+    sys.path.insert(0, _sys_path)
+from pipeline.niveau import niveau_fichier_db as _niveau  # noqa: E402
+
+print("── Volume (dB) : origine → doublage ──")
+_ecarts = []
+for _s in _json.loads((DONNEES / "projects" / _id / "segments.json").read_text(encoding="utf-8"))["segments"]:
+    _cale = DONNEES / "projects" / _id / "voix" / f"cale_{_s['id']:05d}.wav"
+    _obtenu = _niveau(_cale) if _cale.is_file() else None
+    if _s.get("niveau_origine_db") is not None and _obtenu is not None:
+        _ecarts.append(abs(_obtenu - _s["niveau_origine_db"]))
+    print(f"    phrase {_s['id']} ({_s.get('locuteur')}) : {_s.get('niveau_origine_db')} → {_obtenu} "
+          f"(gain {_s.get('gain_db')} dB)")
+if _ecarts:
+    _etape(f"Écart de volume moyen : {sum(_ecarts) / len(_ecarts):.2f} dB (max {max(_ecarts):.2f} dB)")
+
 _mots = ("RoFormer", "Demucs", "Chatterbox", "XTTS", "ollama", "qwen3", "Modèle", "Voix :", "ERROR", "Traceback",
-         "Error", "échoué", "indisponible")
+         "Error", "échoué", "indisponible", "Timbre", "Relecture")
 _journal = [l for l in open("/tmp/voxlingo.log", encoding="utf-8", errors="replace").read().splitlines()
             if _id in l or any(m in l for m in _mots)]
 print("── Journal du moteur (extraits) ──")

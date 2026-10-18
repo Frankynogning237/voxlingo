@@ -109,6 +109,21 @@ Après « Valider et générer les voix », VoxLingo :
 
 L'écran **Résultat** propose le comparateur avant/après, le téléchargement de la vidéo (MP4), des sous-titres (SRT) et de l'audio seul (MP3), et un retour à l'éditeur pour corriger puis régénérer.
 
+**Fidélité à chaque voix d'origine** (automatique) :
+- **volume au décibel près** : pour chaque phrase, le niveau de la voix d'origine (piste voix isolée, silences
+  exclus) est mesuré et la voix doublée y est calée exactement (`pipeline/niveau.py`) : une phrase criée reste
+  criée, un chuchotement reste chuchoté, et l'équilibre voix / musique de la vidéo est conservé ;
+- **timbre** : pour chaque locuteur cloné, le spectre moyen de sa voix d'origine est comparé à celui de ses voix
+  générées, par tiers d'octave, et un égaliseur doux corrige l'écart (micro, pièce, voix plus sourde ou plus
+  brillante ; ±8 dB au plus, `pipeline/timbre_eq.py`) ;
+- **échantillon de clonage** : les phrases où un autre locuteur parle en même temps sont écartées, et chaque
+  extrait est ramené au même niveau, pour une empreinte vocale nette.
+
+**Traduction** : le traducteur connaît le genre de chaque locuteur quand sa hauteur de voix est nette (accords
+corrects : « je suis prête »), puis une **relecture du dialogue entier** corrige les incohérences (noms,
+tutoiement/vouvoiement, accords, tournures peu naturelles) sans changer la longueur. Elle rallonge la traduction
+d'environ 50 % ; `RELECTURE_TRADUCTION=false` dans `.env` la désactive.
+
 **Moteur de voix** (*Paramètres → Modèle de voix*) :
 - **Chatterbox Multilingual** (Resemble AI, licence MIT, 23 langues dont le français) : plus expressif, son intensité
   (`exaggeration`) suit le ton et l'émotion de chaque phrase. Il exige PyTorch 2.6 : il vit dans son propre

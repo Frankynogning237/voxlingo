@@ -179,12 +179,24 @@ SYSTEM_PROMPT = (
 _SCENE: ContextVar[dict[str, Any]] = ContextVar("contexte_de_la_scene", default={})
 
 
+def genre_selon_voix(f0_hz: float | None) -> str | None:
+    """« a man » / « a woman » d'après la hauteur de voix du locuteur, seulement quand elle est nette
+    (entre 150 et 185 Hz, ou au-dessus de 260 Hz — enfants — on ne devine pas)."""
+    if not f0_hz:
+        return None
+    if f0_hz < 150:
+        return "a man"
+    if 185 < f0_hz < 260:
+        return "a woman"
+    return None
+
+
 @contextmanager
 def contexte_de_la_scene(fiche: str = "", scenes: list[dict[str, Any]] | None = None,
-                         noms: dict[str, str] | None = None):
+                         noms: dict[str, str] | None = None, genres: dict[str, str | None] | None = None):
     """Pendant le bloc, chaque traduction reçoit la fiche de la vidéo, la scène en cours, le nom du
-    locuteur et son émotion (voir pipeline/scene.py et pipeline/emotions.py)."""
-    jeton = _SCENE.set({"fiche": fiche, "scenes": scenes or [], "noms": noms or {}})
+    locuteur, son genre (accords grammaticaux) et son émotion (voir pipeline/scene.py et pipeline/emotions.py)."""
+    jeton = _SCENE.set({"fiche": fiche, "scenes": scenes or [], "noms": noms or {}, "genres": genres or {}})
     try:
         yield
     finally:
@@ -203,8 +215,13 @@ def _lignes_de_scene(seg: dict[str, Any]) -> list[str]:
 
     contexte = _SCENE.get()
     lignes = []
-    if _nom(seg):
-        lignes.append(f"Speaker: {_nom(seg)}")
+    genre = (contexte.get("genres") or {}).get(seg.get("locuteur") or "")
+    if _nom(seg) or genre:
+        qui = f"Speaker: {_nom(seg) or 'unnamed'}" + (f" ({genre})" if genre else "")
+        lignes.append(qui)
+    if genre:
+        lignes.append(f"The speaker is {genre}: use the matching grammatical gender for every word referring "
+                      "to the speaker (adjectives, past participles, self-references).")
     if seg.get("emotion"):
         lignes.append(f"Emotion and delivery (from the voice and the face): {decrire(seg['emotion'])}")
     scenes = contexte.get("scenes") or []
@@ -305,6 +322,62 @@ def _traduire_segment(client: httpx.Client, modele: str, segments: list[dict[str
         if not traduction_suspecte(original, essai, source, cible):
             return essai
     return texte
+
+
+REVIEW_PROMPT = (
+    "You are the dubbing editor. The whole dialogue has been translated line by line; you now review ONE "
+    "line in the context of the lines around it. Fix it only if needed: wrong meaning, grammar or spelling "
+    "errors, wrong grammatical gender for the speaker, inconsistent names, terms or forms of address "
+    "(tu/vous, du/Sie…) with the other lines, or phrasing a native speaker would not say in this scene. "
+    "Keep the length close to the current translation. If the line is already correct and natural, return "
+    "it unchanged. Answer with strict JSON only: {\"translation\": \"...\"}"
+)
+FENETRE_RELECTURE = 4  # lignes voisines montrées de chaque côté pendant la relecture
+
+
+def _prompt_relecture(segments: list[dict[str, Any]], traductions: list[str], i: int,
+                      source: str, cible: str) -> str:
+    def ligne(j: int) -> str:
+        qui = f"{_nom(segments[j])}: " if _nom(segments[j]) else ""
+        return f'- {qui}"{segments[j]["texte"]}" -> "{traductions[j]}"'
+
+    debut, fin = max(0, i - FENETRE_RELECTURE), min(len(segments), i + 1 + FENETRE_RELECTURE)
+    lignes = [
+        f"Source language: {LANGUAGE_NAMES.get(source, source)}",
+        f"Target language: {LANGUAGE_NAMES.get(cible, cible)}",
+        "", "Dialogue around the line (original -> current translation):",
+        *(ligne(j) for j in range(debut, i)),
+        f">>> {ligne(i)[2:]}",
+        *(ligne(j) for j in range(i + 1, fin)),
+        "", *_lignes_de_scene(segments[i]),
+        f'LINE TO REVIEW: "{segments[i]["texte"]}"',
+        f'Current translation: "{traductions[i]}"',
+    ]
+    return "\n".join(_avec_consignes(lignes))
+
+
+def relire(client: httpx.Client, modele: str, segments: list[dict[str, Any]], traductions: list[str], i: int,
+           source: str, cible: str) -> str:
+    """Relecture d'une ligne dans son dialogue. La correction n'est gardée que si elle est plausible
+    (pas suspecte, longueur proche) : sinon la traduction actuelle reste."""
+    actuelle = traductions[i]
+    try:
+        reponse = client.post("/api/chat", json={
+            "model": modele, "stream": False, "keep_alive": "2m", **options_modele(modele),
+            "options": {"temperature": 0.2},
+            "format": {"type": "object", "properties": {"translation": {"type": "string"}}, "required": ["translation"]},
+            "messages": [{"role": "system", "content": REVIEW_PROMPT},
+                         {"role": "user", "content": _prompt_relecture(segments, traductions, i, source, cible)}],
+        })
+        reponse.raise_for_status()
+        corrigee = json.loads(reponse.json()["message"]["content"])["translation"].strip().strip('"').strip()
+    except (httpx.HTTPError, json.JSONDecodeError, KeyError, AttributeError, TypeError) as exc:
+        logger.warning("Relecture de la ligne %d impossible (%s)", i, exc)
+        return actuelle
+    if not corrigee or corrigee == actuelle or traduction_suspecte(segments[i]["texte"], corrigee, source, cible):
+        return actuelle
+    rapport = compter_syllabes(corrigee) / max(compter_syllabes(actuelle), 1)
+    return corrigee if 0.7 <= rapport <= 1.25 else actuelle
 
 
 SHORTEN_PROMPT = (
@@ -446,13 +519,25 @@ def translate_segments(
         logger.info("Traduction %s → %s avec Ollama %s", source, cible, modele)
         traductions: list[str] = []
         try:
+            relecture = get_settings().relecture_traduction and len(segments) > 1
+            part = 0.65 if relecture else 1.0  # la relecture prend le reste de la progression
             with httpx.Client(base_url=get_settings().ollama_url, timeout=180) as client:
                 for i in range(len(segments)):
                     traductions.append(
                         _traduire_segment(client, modele, segments, i, source, cible, traductions)
                     )
                     if on_progress:
-                        on_progress((i + 1) / len(segments))
+                        on_progress(part * (i + 1) / len(segments))
+                if relecture:
+                    # Relecture du dialogue entier : cohérence (noms, tutoiement), accords, naturel
+                    corrigees = 0
+                    for i in range(len(segments)):
+                        nouvelle = relire(client, modele, segments, traductions, i, source, cible)
+                        corrigees += nouvelle != traductions[i]
+                        traductions[i] = nouvelle
+                        if on_progress:
+                            on_progress(part + (1 - part) * (i + 1) / len(segments))
+                    logger.info("Relecture : %d ligne(s) corrigée(s) sur %d", corrigees, len(segments))
             return traductions, f"ollama:{modele}"
         except (httpx.HTTPError, TranslationError) as exc:
             logger.warning("Ollama a échoué (%s) : passage à NLLB", exc)

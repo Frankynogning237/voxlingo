@@ -40,23 +40,47 @@ def facteur_calage(duree_generee: float, seg: dict[str, Any]) -> tuple[float, bo
     return 1.0, False
 
 
-def caler(brut: Path, cale: Path, seg: dict[str, Any], gain_db: float = 0.0) -> dict[str, Any]:
-    """Écrit la voix calée (durée et volume) et renvoie {facteur, duree, trop_long}."""
+def _filtrer(entree: Path, sortie: Path, filtres: list[str], seg: dict[str, Any]) -> None:
+    if not filtres:
+        sortie.write_bytes(entree.read_bytes())
+        return
+    resultat = subprocess.run(
+        [_require("ffmpeg"), "-y", "-v", "error", "-i", str(entree), "-filter:a", ",".join(filtres), str(sortie)],
+        capture_output=True, text=True,
+    )
+    if resultat.returncode != 0:
+        raise RuntimeError(f"Calage impossible du segment {seg['id']} : {resultat.stderr.strip()}")
+
+
+def caler(brut: Path, cale: Path, seg: dict[str, Any], gain_db: float = 0.0, egaliseur: str | None = None,
+          niveau_cible_db: float | None = None) -> dict[str, Any]:
+    """Écrit la voix calée et renvoie {facteur, duree, trop_long, gain_db}.
+
+    Durée (atempo), timbre (`egaliseur`, filtre FFmpeg) et volume. Avec `niveau_cible_db` (niveau de
+    la phrase d'origine, pipeline/niveau.py), le volume est calé au décibel près : on mesure la voix
+    après durée et timbre, puis on applique l'écart exact. Sinon, `gain_db` (écart relatif) est appliqué.
+    """
+    from pipeline.niveau import gain_pour_egaler, niveau_fichier_db
+
     duree = duree_wav(brut)
     facteur, trop_long = facteur_calage(duree, seg)
     filtres = []
     if abs(facteur - 1.0) >= 0.01:
         filtres.append(f"atempo={facteur:.4f}")
-    if abs(gain_db) >= 0.5:
-        filtres += [f"volume={gain_db:.1f}dB", "alimiter=limit=0.95"]
-    if not filtres:
-        cale.write_bytes(brut.read_bytes())
+    if egaliseur:
+        filtres.append(egaliseur)
+    if niveau_cible_db is not None:
+        intermediaire = cale.with_name(cale.stem + "_tmp.wav")
+        _filtrer(brut, intermediaire, filtres, seg)
+        gain = gain_pour_egaler(niveau_cible_db, niveau_fichier_db(intermediaire))
+        gain_db = gain if gain is not None else gain_db
+        source, filtres = intermediaire, []
     else:
-        resultat = subprocess.run(
-            [_require("ffmpeg"), "-y", "-v", "error", "-i", str(brut),
-             "-filter:a", ",".join(filtres), str(cale)],
-            capture_output=True, text=True,
-        )
-        if resultat.returncode != 0:
-            raise RuntimeError(f"Calage impossible du segment {seg['id']} : {resultat.stderr.strip()}")
-    return {"facteur": round(facteur, 3), "duree": round(duree / facteur, 2), "trop_long": trop_long}
+        source = brut
+    if abs(gain_db) >= 0.1:
+        filtres += [f"volume={gain_db:.2f}dB", "alimiter=limit=0.95:level=false"]
+    _filtrer(source, cale, filtres, seg)
+    if source is not brut:
+        source.unlink(missing_ok=True)
+    return {"facteur": round(facteur, 3), "duree": round(duree / facteur, 2), "trop_long": trop_long,
+            "gain_db": round(gain_db, 2)}

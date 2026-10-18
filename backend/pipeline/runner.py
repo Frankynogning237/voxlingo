@@ -131,9 +131,13 @@ def _contexte(job_id: str):
     from pipeline.scene import formater_fiche
     from pipeline.translate import contexte_de_la_scene
 
+    from pipeline.translate import genre_selon_voix
+
     data = jobs.read_segments(job_id)
-    noms = {code: infos.get("nom", code) for code, infos in jobs.locuteurs(data).items()}
-    return contexte_de_la_scene(formater_fiche(data.get("fiche")), data.get("scenes"), noms)
+    fiche = jobs.locuteurs(data)
+    noms = {code: infos.get("nom", code) for code, infos in fiche.items()}
+    genres = {code: genre_selon_voix(infos.get("f0_hz")) for code, infos in fiche.items()}
+    return contexte_de_la_scene(formater_fiche(data.get("fiche")), data.get("scenes"), noms, genres)
 
 
 def _analyser_scene(job_id: str, report: Callable[[float], None]) -> None:
@@ -444,7 +448,8 @@ def voix_des_locuteurs(job_id: str, data: dict) -> dict[str, str]:
         else:
             reference = dossier / f"reference_{code}.wav"
             if not reference.is_file():
-                extraire_reference(source, phrases, reference)
+                autres = [s for s in data["segments"] if jobs.locuteur(s) != code]
+                extraire_reference(source, phrases, reference, autres)
             resultat[code] = f"ref:{reference}"
         # Réglages de timbre du locuteur (page Locuteurs), appliqués après la synthèse
         timbre = voice_bank.nettoyer_timbre(infos.get("timbre"))
@@ -521,15 +526,37 @@ def _do_export(job_id: str, report: Callable[[float], None]) -> None:
     duree = status.get("duree_s") or data.get("duree_s")
     marquer_fin_max(data["segments"], duree)
 
+    # Fidélité à la voix d'origine : timbre (égalisation par locuteur cloné) et volume au décibel près
+    from pipeline.niveau import lire_extrait, niveau_actif_db
+    from pipeline.timbre_eq import correction_locuteur, filtre_ffmpeg
+
+    voix_isolee = folder / "voix_isolee.wav"
+    egaliseurs: dict[str, str | None] = {}
+    if voix_isolee.is_file():
+        for code in jobs.locuteurs(data):
+            if not (dossier / f"reference_{code}.wav").is_file():
+                continue  # voix de la bibliothèque : son timbre est choisi, pas recopié
+            phrases = [s for s in data["segments"] if jobs.locuteur(s) == code]
+            gains = correction_locuteur(voix_isolee, phrases, [fichier_brut(dossier, s["id"]) for s in phrases])
+            egaliseurs[code] = filtre_ffmpeg(gains)
+            if gains is not None:
+                logger.info("[%s] Timbre de %s : correction %s dB", job_id, code,
+                            " ".join(f"{g:+.0f}" for g in gains))
+    report(0.05)
+
     placements = []
     for n, seg in enumerate(data["segments"]):
         cale = dossier / f"cale_{seg['id']:05d}.wav"
-        resultat = caler(fichier_brut(dossier, seg["id"]), cale, seg, gain_volume(seg))
+        niveau = niveau_actif_db(*lire_extrait(voix_isolee, seg["debut"], seg["fin"])) if voix_isolee.is_file() else None
+        resultat = caler(fichier_brut(dossier, seg["id"]), cale, seg, gain_volume(seg),
+                         egaliseurs.get(jobs.locuteur(seg)), niveau)
+        seg["niveau_origine_db"] = niveau
+        seg["gain_db"] = resultat["gain_db"]
         seg["facteur_voix"] = resultat["facteur"]
         seg["duree_doublage"] = resultat["duree"]
         seg["trop_long"] = resultat["trop_long"]  # mesure réelle, remplace l'estimation
         placements.append((seg["debut"], cale))
-        report(0.5 * (n + 1) / len(data["segments"]))
+        report(0.05 + 0.45 * (n + 1) / len(data["segments"]))
     jobs.write_segments(job_id, data)
 
     construire_piste(placements, duree, folder / "voix_doublee.wav")

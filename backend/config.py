@@ -78,6 +78,8 @@ class Settings(BaseSettings):
 
     # Jeton Hugging Face (phase 6), uniquement dans .env
     hf_token: str | None = None
+    # Relecture du dialogue traduit (cohérence, accords, naturel) : plus fine, ≈ 1,5 fois plus longue
+    relecture_traduction: bool = True
     # Sauvegarde automatique sur Hugging Face (moteur sur Kaggle/Colab) : jeton avec droit
     # d'écriture et dépôt dataset privé (par défaut « votre-compte/voxlingo-sauvegarde »)
     hf_token_ecriture: str | None = None
