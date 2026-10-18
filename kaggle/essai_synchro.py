@@ -2,7 +2,7 @@
 
     exec(open(CODE / "kaggle" / "essai_synchro.py", encoding="utf-8").read())
 
-Double un extrait de 12 s de la vidéo de démonstration de MuseTalk (un visage qui parle, de face)
+Double la vidéo de démonstration de MuseTalk (≈ 11 s un visage qui parle, de face)
 avec l'option « Synchronisation labiale », puis affiche le résultat. Tout se passe sur le serveur ;
 la clé d'accès reste dans le carnet (variable CLE).
 """
@@ -40,7 +40,9 @@ _etape("MuseTalk prêt ; le moteur le voit : " + str(_api.get("/health").json()[
 
 # ── 2. Vidéo d'essai : un visage qui parle ────────────────────────────────
 _video = _Path("/tmp/essai_synchro.mp4")
-run(f"ffmpeg -y -v error -i /tmp/musetalk/code/data/video/yongen.mp4 -t 12 -c:v libx264 -c:a aac {_video}")
+# La démo de MuseTalk fournit l'image et la voix séparément : on les réunit
+run("ffmpeg -y -v error -i /tmp/musetalk/code/data/video/yongen.mp4 -i /tmp/musetalk/code/data/audio/yongen.wav "
+    f"-map 0:v -map 1:a -shortest -c:v libx264 -c:a aac {_video}")
 
 # ── 3. Doublage avec synchronisation labiale ──────────────────────────────
 with open(_video, "rb") as _f:

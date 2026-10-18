@@ -176,9 +176,22 @@ calme, doux ou neutre, par rapport à la façon habituelle de parler de la même
 l'expressivité de la voix doublée, et son volume suit celui de la phrase d'origine (une phrase criée reste forte).
 C'est une analyse acoustique, pas une reconnaissance d'émotions : le ton se corrige d'un clic dans l'éditeur.
 
-## Synchronisation labiale (Kaggle)
+## Synchronisation labiale
 
-Sans carte NVIDIA, la synchronisation des lèvres (LatentSync 1.5) se fait sur le GPU gratuit de Kaggle :
+**Par le moteur (GPU Kaggle/Colab, automatique).** Quand le moteur tourne sur le carnet Kaggle/Colab, il
+synchronise lui-même les lèvres avec **MuseTalk 1.5** (Tencent Music, licence MIT, poids utilisables librement) :
+cochez *Synchronisation labiale* au lancement du doublage, ou cliquez sur **Synchroniser les lèvres avec le
+moteur** dans l'écran Résultat. Le moteur ne confie à MuseTalk que des morceaux de 15 s au plus, là où une voix
+doublée parle ; le reste de l'image est gardé tel quel, puis tout est recollé image par image (aucun décalage)
+et remis au format de la vidéo fournie. Un passage sans visage de face garde l'image d'origine ; si la
+synchronisation échoue, le doublage reste terminé et la méthode manuelle ci-dessous reste proposée.
+
+MuseTalk exige Python 3.10 et PyTorch 2.0 : le carnet l'installe en arrière-plan dans son propre environnement
+(`kaggle/installer_musetalk.sh`, ≈ 10 min, réglages `MUSETALK_PYTHON` et `MUSETALK_DIR`). Pour l'essayer sur un
+vrai visage depuis le carnet : `exec(open(CODE / "kaggle" / "essai_synchro.py", encoding="utf-8").read())`.
+
+**Sans GPU (carnet Kaggle manuel).** La synchronisation des lèvres (LatentSync 1.5) se fait sur le GPU gratuit
+de Kaggle :
 
 1. écran **Résultat** → *Télécharger le paquet Kaggle* (vidéo, voix doublée, carnet `kaggle/lipsync_kaggle.ipynb`, guide) ;
 2. sur kaggle.com : importer le carnet et le paquet, choisir un GPU, *Run All* ;
