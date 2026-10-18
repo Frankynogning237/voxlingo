@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # Installe MuseTalk 1.5 (synchronisation labiale, licence MIT) dans son propre environnement Python,
 # pour le moteur VoxLingo sur Kaggle/Colab. Lancé en arrière-plan par le carnet (≈ 10 min).
-#   Environnement : /tmp/musetalk/env (Python 3.10, PyTorch 2.0.1 CUDA 11.8, OpenMMLab)
-#   Code et poids : /tmp/musetalk/code ; « .pret » y est créé quand tout est installé.
+#   Environnement : $MUSETALK_RACINE/env (Python 3.10, PyTorch 2.0.1 CUDA 11.8, OpenMMLab)
+#   Code et poids : $MUSETALK_RACINE/code ; « .pret » y est créé quand tout est installé.
+#   MUSETALK_RACINE vaut /tmp/musetalk par défaut (Kaggle/Colab) ; un disque permanent ailleurs.
+#   MUSETALK_SANS_GPU=1 saute la vérification du GPU (construction d'une image sans GPU, Modal).
 # Le moteur l'utilise grâce aux réglages MUSETALK_PYTHON et MUSETALK_DIR.
 set -euo pipefail
 
-RACINE=/tmp/musetalk
+RACINE="${MUSETALK_RACINE:-/tmp/musetalk}"
 ENV="$RACINE/env"
 CODE="$RACINE/code"
 P="$ENV/bin/python"
@@ -40,6 +42,6 @@ mkdir -p models/face-parse-bisent
   "$ENV/bin/gdown" -q 154JgKpzCPW82qINcVieuPH3fZ2e0P812 -O models/face-parse-bisent/79999_iter.pth
 curl -fsSL https://download.pytorch.org/models/resnet18-5c106cde.pth -o models/face-parse-bisent/resnet18-5c106cde.pth
 
-MPLBACKEND=Agg "$P" -c "import torch; from mmpose.apis import init_model; assert torch.cuda.is_available(), 'pas de GPU'"
+MPLBACKEND=Agg "$P" -c "import os, torch; from mmpose.apis import init_model; assert torch.cuda.is_available() or os.environ.get('MUSETALK_SANS_GPU'), 'pas de GPU'"
 touch "$CODE/.pret"
 echo "MuseTalk prêt."
