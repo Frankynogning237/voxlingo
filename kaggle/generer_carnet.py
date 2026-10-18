@@ -180,6 +180,7 @@ env = os.environ | {
     "OLLAMA_MODEL": MODELE_TRADUCTION,
     "MODELE_VISION": MODELE_VISION or "aucun",
     "COQUI_TOS_AGREED": "1",
+    "MPLBACKEND": "Agg",  # l'affichage du carnet n'existe pas pour le moteur (matplotlib le refuserait)
     "CHATTERBOX_PYTHON": CHATTERBOX_PYTHON,
     "MUSETALK_PYTHON": MUSETALK_PYTHON,
     "MUSETALK_DIR": MUSETALK_DIR,

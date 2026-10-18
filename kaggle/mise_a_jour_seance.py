@@ -39,7 +39,7 @@ if _occupes:
     print("Doublage en cours : le moteur n'est pas redémarré (relancez cette cellule plus tard).", _occupes)
 else:
     env.update(CHATTERBOX_PYTHON="/tmp/chatterbox/bin/python", MUSETALK_PYTHON="/tmp/musetalk/env/bin/python",
-               MUSETALK_DIR="/tmp/musetalk/code")
+               MUSETALK_DIR="/tmp/musetalk/code", MPLBACKEND="Agg")
     _sp.run("pkill -f 'uvicorn main:app'", shell=True)
     _time.sleep(3)
     moteur = _sp.Popen([sys.executable, "-m", "uvicorn", "main:app", "--host", "127.0.0.1", "--port", "8000"],

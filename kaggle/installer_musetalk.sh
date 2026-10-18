@@ -40,6 +40,6 @@ mkdir -p models/face-parse-bisent
   "$ENV/bin/gdown" -q 154JgKpzCPW82qINcVieuPH3fZ2e0P812 -O models/face-parse-bisent/79999_iter.pth
 curl -fsSL https://download.pytorch.org/models/resnet18-5c106cde.pth -o models/face-parse-bisent/resnet18-5c106cde.pth
 
-"$P" -c "import mmcv, mmpose, mmdet, torch; assert torch.cuda.is_available(), 'pas de GPU'"
+MPLBACKEND=Agg "$P" -c "import torch; from mmpose.apis import init_model; assert torch.cuda.is_available(), 'pas de GPU'"
 touch "$CODE/.pret"
 echo "MuseTalk prêt."

@@ -141,7 +141,12 @@ def synchroniser(video: Path, piste: Path, segments: list[dict[str, Any]], duree
         "--unet_config", "models/musetalkV15/musetalk.json", "--version", "v15", "--use_float16",
     ]
     logger.info("MuseTalk : %d morceau(x) à synchroniser", len(morceaux))
-    processus = subprocess.Popen(commande, cwd=settings.musetalk_dir, stdout=subprocess.PIPE,
+    import os
+
+    # Dans un carnet Jupyter, MPLBACKEND désigne l'affichage du carnet, inconnu de cet environnement :
+    # matplotlib (importé par mmpose) refuserait de démarrer
+    env = {**os.environ, "MPLBACKEND": "Agg"}
+    processus = subprocess.Popen(commande, cwd=settings.musetalk_dir, stdout=subprocess.PIPE, env=env,
                                  stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
     journal: list[str] = []
     try:
