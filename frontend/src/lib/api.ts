@@ -131,6 +131,31 @@ export type Job = {
 
 export type Ton = 'energique' | 'calme' | 'intense' | 'doux' | 'neutre'
 
+export type Emotion = 'neutre' | 'joie' | 'colère' | 'tristesse' | 'peur' | 'surprise' | 'dégoût'
+export type Intensite = 'légère' | 'moyenne' | 'forte'
+
+/** Émotion d'une phrase, d'après la voix, la manière de dire et le visage (analyse de la scène). */
+export type EmotionPhrase = {
+  emotion: Emotion
+  intensite: Intensite
+  confiance: number
+  maniere: string[]
+  visage: string | null
+  corrigee?: boolean
+}
+
+/** Fiche de la vidéo rédigée par l'IA (corrigeable) : elle guide toute la traduction. */
+export type FicheVideo = {
+  genre: string
+  resume: string
+  registre: string
+  ton: string
+  personnages: { locuteur: string; description: string }[]
+  corrigee?: boolean
+}
+
+export type Scene = { debut: number; fin: number; description: string }
+
 export type Segment = {
   id: number
   debut: number
@@ -153,6 +178,8 @@ export type Segment = {
   texte_corrige?: boolean
   /** Texte d'origine corrigé depuis la dernière traduction : à retraduire */
   a_retraduire?: boolean
+  /** Émotion et manière de dire (analyse de la scène), corrigeable */
+  emotion?: EmotionPhrase
 }
 
 export type Transcription = {
@@ -163,6 +190,8 @@ export type Transcription = {
   langue_cible?: string
   moteur_traduction?: string
   locuteurs?: Record<string, { nom: string; couleur: string; voix?: string }>
+  fiche?: FicheVideo | null
+  scenes?: Scene[]
 }
 
 async function request<T>(path: string): Promise<T> {
@@ -396,6 +425,12 @@ export const setSegmentSpeaker = (id: string, segId: number, locuteur: string) =
   send<Transcription>(`/jobs/${id}/segments/${segId}/locuteur`, 'PUT', { locuteur })
 export const setSegmentTone = (id: string, segId: number, ton: Ton) =>
   send<Transcription>(`/jobs/${id}/segments/${segId}/ton`, 'PUT', { ton })
+export const setSegmentEmotion = (id: string, segId: number, emotion: Emotion, intensite: Intensite) =>
+  send<Transcription>(`/jobs/${id}/segments/${segId}/emotion`, 'PUT', { emotion, intensite })
+export const setVideoSheet = (id: string, fiche: Omit<FicheVideo, 'corrigee'>) =>
+  send<Transcription>(`/jobs/${id}/fiche`, 'PUT', fiche)
+/** Relance l'analyse de la scène (émotions, description des images, fiche). */
+export const analyzeScene = (id: string) => send<Job>(`/jobs/${id}/analyser`, 'POST')
 export const detectSpeakers = (id: string) => send<Job>(`/jobs/${id}/locuteurs/detecter`, 'POST')
 export const autoAssignVoices = (id: string) => send<Locuteur[]>(`/jobs/${id}/locuteurs/attribuer`, 'POST')
 export const speakerAudioUrl = (id: string, code: string, quoi: 'original' | 'doublee') => fichier(`/jobs/${id}/locuteurs/${code}/${quoi}`)

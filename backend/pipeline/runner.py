@@ -28,8 +28,9 @@ WEIGHTS: dict[str, int] = {
     "separation": 10,
     "transcription": 9,
     "locuteurs": 3,
+    "analyse": 5,
     "traduction": 20,
-    "voix": 45,
+    "voix": 40,
     "export": 10,
 }
 
@@ -124,8 +125,44 @@ def _consignes(job_id: str):
     return consignes_du_projet(options.get("glossaire", ""), options.get("consignes", ""))
 
 
+def _contexte(job_id: str):
+    """Fiche de la vidéo, scènes et noms des locuteurs, transmis à chaque traduction."""
+    from pipeline.scene import formater_fiche
+    from pipeline.translate import contexte_de_la_scene
+
+    data = jobs.read_segments(job_id)
+    noms = {code: infos.get("nom", code) for code, infos in jobs.locuteurs(data).items()}
+    return contexte_de_la_scene(formater_fiche(data.get("fiche")), data.get("scenes"), noms)
+
+
+def _analyser_scene(job_id: str, report: Callable[[float], None]) -> None:
+    """Regarder et écouter avant de traduire : émotion de chaque phrase (voix, manière de dire,
+    visage), description des scènes, puis fiche de la vidéo rédigée par l'IA."""
+    from pipeline import emotions, scene
+
+    status = jobs.read_status(job_id)
+    dossier = jobs.project_dir(job_id)
+    data = jobs.read_segments(job_id)
+    vision = json.loads((dossier / "vision.json").read_text(encoding="utf-8")) if (dossier / "vision.json").is_file() else None
+    voix_isolee = dossier / "voix_isolee.wav"
+    source = voix_isolee if voix_isolee.is_file() else dossier / "audio.wav"
+    if any("prosodie" not in s for s in data["segments"]):
+        _analyser_tons(job_id, data)
+    emotions.analyser(data["segments"], source, vision, jobs.locuteurs(data), on_progress=_sous_progression(report, 0, 0.4))
+    jobs.write_segments(job_id, data)
+    duree = status.get("duree_s") or data.get("duree_s") or 0.0
+    data["scenes"] = scene.decrire_scenes(dossier / status["fichier"], vision, duree,
+                                          on_progress=_sous_progression(report, 0.4, 0.8))
+    jobs.write_segments(job_id, data)
+    if not (data.get("fiche") or {}).get("corrigee"):
+        data["fiche"] = scene.rediger_fiche(data["segments"], jobs.locuteurs(data), data["scenes"],
+                                            status.get("langue_source") or data.get("langue") or "fr")
+    jobs.write_segments(job_id, data)
+    report(1.0)
+
+
 def _do_translate(job_id: str, report: Callable[[float], None], ids: set[int] | None = None) -> None:
-    with _consignes(job_id):
+    with _consignes(job_id), _contexte(job_id):
         _traduire(job_id, report, ids)
 
 
@@ -185,7 +222,7 @@ def _retraduire_selection(job_id: str, data: dict, ids: set[int], source: str, c
 
 
 def _do_adjust(job_id: str, ids: set[int] | None, report: Callable[[float], None]) -> None:
-    with _consignes(job_id):
+    with _consignes(job_id), _contexte(job_id):
         _ajuster(job_id, ids, report)
 
 
@@ -272,6 +309,7 @@ def _traiter(job_id: str) -> None:
             jobs.update_step(job_id, "separation", etat="ignore")
         _run_step(job_id, "transcription", do_transcribe)
         _run_step(job_id, "locuteurs", do_speakers)
+        _run_step(job_id, "analyse", lambda report: _analyser_scene(job_id, report))
         _run_step(job_id, "traduction", lambda report: _do_translate(job_id, report))
 
     _guarded(job_id, body)
@@ -333,6 +371,13 @@ def _identifier_locuteurs(job_id: str, report: Callable[[float], None]) -> None:
             data["locuteurs"][code]["voix"] = voix_id
     jobs.write_segments(job_id, data)
     jobs.update_status(job_id, nb_locuteurs=len(data["locuteurs"]))
+
+
+def run_analysis(job_id: str) -> None:
+    """(Re)lance l'analyse de la scène d'un projet déjà transcrit (bouton « Analyser la scène »)."""
+    etat_final = "termine" if (jobs.read_status(job_id) or {}).get("fichier_sortie") else "a_valider"
+    _guarded(job_id, lambda: _run_step(job_id, "analyse", lambda report: _analyser_scene(job_id, report)),
+             etat_final=etat_final)
 
 
 def run_speakers(job_id: str) -> None:

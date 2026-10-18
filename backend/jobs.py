@@ -29,6 +29,7 @@ STEPS: list[dict[str, Any]] = [
     {"cle": "separation", "libelle": "Séparation voix / fond", "disponible": True},
     {"cle": "transcription", "libelle": "Transcription", "disponible": True},
     {"cle": "locuteurs", "libelle": "Identification des locuteurs", "disponible": True},
+    {"cle": "analyse", "libelle": "Analyse de la scène (émotions, contexte)", "disponible": True},
     {"cle": "traduction", "libelle": "Traduction", "disponible": True},
     {"cle": "voix", "libelle": "Génération des voix", "disponible": True},
     {"cle": "synchro_labiale", "libelle": "Synchronisation labiale", "disponible": True},
@@ -243,6 +244,13 @@ def start_voices(job_id: str) -> None:
     from pipeline.runner import run_voices
 
     threading.Thread(target=run_voices, args=(job_id,), name=f"voix-{job_id}", daemon=True).start()
+
+
+def start_analysis(job_id: str) -> None:
+    """Lance l'analyse de la scène (émotions, scènes, fiche) dans un thread en arrière-plan."""
+    from pipeline.runner import run_analysis
+
+    threading.Thread(target=run_analysis, args=(job_id,), name=f"analyse-{job_id}", daemon=True).start()
 
 
 def start_speakers(job_id: str) -> None:

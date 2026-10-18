@@ -88,6 +88,17 @@ def extraire_reference(video: Path, segments: list[dict[str, Any]], sortie: Path
     return sortie
 
 
+def temperature(seg: dict[str, Any]) -> float:
+    """Expressivité de XTTS : selon le ton de la phrase, renforcée par une émotion forte."""
+    base = TEMPERATURE.get(seg.get("ton") or "neutre", 0.7)
+    emotion = seg.get("emotion") or {}
+    if emotion.get("emotion") in ("colère", "joie", "surprise", "peur") and emotion.get("intensite") == "forte":
+        base += 0.1
+    elif emotion.get("emotion") == "tristesse":
+        base -= 0.05
+    return round(min(0.9, max(0.5, base)), 2)
+
+
 INTONATION_MIN_S, INTONATION_MAX_S = 1.2, 15.0  # extrait de phrase exploitable pour l'intonation
 
 
@@ -203,7 +214,7 @@ def generer_voix(
                 "vitesse": vitesse_xtts(s, s["traduction"], langue),
                 "disponible": max(s.get("fin_max", s["fin"]) - s["debut"], 0.1),
                 "voix": voix[s["id"]],
-                "temperature": TEMPERATURE.get(s.get("ton") or "neutre", 0.7),
+                "temperature": temperature(s),
                 "intonation": s.get("intonation"),
             }
             for s in a_generer

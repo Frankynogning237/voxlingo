@@ -51,6 +51,7 @@ ADRESSE_VERCEL = "https://voxlingo-gray.vercel.app"  # adresse de votre interfac
 DEPOT = "Frankynogning237/voxlingo"
 BRANCHE = "main"
 MODELE_TRADUCTION = "qwen2.5:14b"  # modèle Ollama : le plus fin sur les dialogues (≈ 9 Go, le GPU T4 le fait tourner)
+MODELE_VISION = "qwen2.5vl:7b"  # modèle Ollama qui regarde les images pour décrire chaque scène (≈ 6 Go) ; "" = sans
 NOM_UTILISATEUR = "Franky"
 DEPOT_SAUVEGARDE = ""  # dépôt dataset privé de sauvegarde ; vide = « votre-compte/voxlingo-sauvegarde »
 """)
@@ -114,7 +115,7 @@ print("FFmpeg Rubber Band :", "oui" if "rubberband" in filtres else "non (voix e
 # PyTorch déjà installé avec CUDA : on le fige pour que pip ne le remplace pas par une version CPU
 run(f"{sys.executable} -m pip freeze | grep -iE '^(torch|torchaudio|torchvision)==' > /tmp/contraintes.txt || true")
 # Outils facultatifs (ils demandent un PyTorch récent) : installés à part, le moteur s'en passe s'ils échouent
-FACULTATIFS = ("pyannote.audio", "mediapipe", "onnxruntime")
+FACULTATIFS = ("pyannote.audio", "mediapipe", "onnxruntime", "funasr")
 lignes = (CODE / "backend" / "requirements.txt").read_text(encoding="utf-8").splitlines()
 (Path("/tmp") / "requirements-base.txt").write_text(
     chr(10).join(l for l in lignes if not l.strip().startswith(FACULTATIFS)), encoding="utf-8")
@@ -132,7 +133,9 @@ ollama = subprocess.Popen(["ollama", "serve"], stdout=open("/tmp/ollama.log", "w
                           start_new_session=True)
 time.sleep(5)
 run(f"ollama pull {MODELE_TRADUCTION}")
-print("Ollama prêt avec", MODELE_TRADUCTION)
+if MODELE_VISION:  # « regarder » la vidéo : description de chaque scène avant la traduction
+    run(f"ollama pull {MODELE_VISION}")
+print("Ollama prêt avec", MODELE_TRADUCTION, "et", MODELE_VISION or "sans modèle de vision")
 """)
 
 code("""
@@ -153,6 +156,7 @@ env = os.environ | {
     "MODELS_DIR": str(MODELES),
     "NOM_UTILISATEUR": NOM_UTILISATEUR,
     "OLLAMA_MODEL": MODELE_TRADUCTION,
+    "MODELE_VISION": MODELE_VISION or "aucun",
     "COQUI_TOS_AGREED": "1",
     "LD_LIBRARY_PATH": ":".join(libs + [os.environ.get("LD_LIBRARY_PATH", "")]),
 }

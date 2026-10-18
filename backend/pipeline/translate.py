@@ -142,19 +142,63 @@ def consignes_du_projet(glossaire: str = "", consignes: str = ""):
 
 
 def _avec_consignes(lignes: list[str]) -> list[str]:
-    bloc = _CONSIGNES.get()
-    return [bloc, "", *lignes] if bloc else lignes
+    fiche = _SCENE.get().get("fiche") or ""
+    blocs = [b for b in (f"VIDEO CONTEXT SHEET:\n{fiche}" if fiche else "", _CONSIGNES.get()) if b]
+    return [*(x for b in blocs for x in (b, "")), *lignes]
 
 
 SYSTEM_PROMPT = (
-    "You are a professional subtitle and dubbing translator. You translate ONE line of a video "
-    "transcript at a time. Rules: (1) keep the exact meaning; (2) keep the register and tone "
-    "(casual, neutral, formal); (3) replace idioms with a natural equivalent, never word for word; "
-    "(4) keep the length close to the original so the dubbed voice fits the same time; "
-    "(5) translate ONLY the line to translate, never the context lines; "
-    "(6) the output must be written entirely in the target language. "
+    "You are a professional dubbing adapter. You have watched and listened to the whole video: you are "
+    "given a context sheet, what is happening on screen, who is speaking and with which emotion and "
+    "delivery. You adapt ONE line of the transcript at a time, as a native actor would really say it "
+    "in this scene. Rules: (1) convey the meaning, the intention and the emotion of the line in this "
+    "situation, never a word-for-word translation; (2) keep the speaker's register and tone (slang, "
+    "casual, formal, child, teasing, angry…); (3) adapt idioms, jokes, insults and slang to natural "
+    "equivalents in the target language; (4) keep the length close to the original so the dubbed voice "
+    "fits the same time; (5) translate ONLY the line to translate, never the context lines; (6) write "
+    "entirely in the target language, with correct spelling and grammar. "
     'Answer with strict JSON only: {"translation": "..."}'
 )
+
+
+# ───────────────────────── Contexte de la scène (analyse avant traduction) ─────────────────────────
+
+_SCENE: ContextVar[dict[str, Any]] = ContextVar("contexte_de_la_scene", default={})
+
+
+@contextmanager
+def contexte_de_la_scene(fiche: str = "", scenes: list[dict[str, Any]] | None = None,
+                         noms: dict[str, str] | None = None):
+    """Pendant le bloc, chaque traduction reçoit la fiche de la vidéo, la scène en cours, le nom du
+    locuteur et son émotion (voir pipeline/scene.py et pipeline/emotions.py)."""
+    jeton = _SCENE.set({"fiche": fiche, "scenes": scenes or [], "noms": noms or {}})
+    try:
+        yield
+    finally:
+        _SCENE.reset(jeton)
+
+
+def _nom(seg: dict[str, Any]) -> str:
+    noms = _SCENE.get().get("noms") or {}
+    return noms.get(seg.get("locuteur") or "", "")
+
+
+def _lignes_de_scene(seg: dict[str, Any]) -> list[str]:
+    """Qui parle, avec quelle émotion, et ce qui se passe à l'image, pour la ligne à traduire."""
+    from pipeline.emotions import decrire
+    from pipeline.scene import scene_a
+
+    contexte = _SCENE.get()
+    lignes = []
+    if _nom(seg):
+        lignes.append(f"Speaker: {_nom(seg)}")
+    if seg.get("emotion"):
+        lignes.append(f"Emotion and delivery (from the voice and the face): {decrire(seg['emotion'])}")
+    scenes = contexte.get("scenes") or []
+    scene = scene_a(scenes, (seg["debut"] + seg["fin"]) / 2) if scenes and "debut" in seg else None
+    if scene:
+        lignes.append(f"On screen: {scene}")
+    return lignes
 
 
 def _prompt(segments: list[dict[str, Any]], i: int, source: str, cible: str,
@@ -166,17 +210,20 @@ def _prompt(segments: list[dict[str, Any]], i: int, source: str, cible: str,
         f"Target language: {LANGUAGE_NAMES.get(cible, cible)}",
     ]
     if avec_contexte:
+        def qui(j: int) -> str:
+            return f"{_nom(segments[j])}: " if _nom(segments[j]) else ""
+
         avant = [
-            f'- "{segments[j]["texte"]}" -> "{deja_traduits[j]}"'
+            f'- {qui(j)}"{segments[j]["texte"]}" -> "{deja_traduits[j]}"'
             for j in range(max(0, i - CONTEXTE), i)
         ]
-        apres = [f'- "{segments[j]["texte"]}"' for j in range(i + 1, min(len(segments), i + 1 + CONTEXTE))]
+        apres = [f'- {qui(j)}"{segments[j]["texte"]}"' for j in range(i + 1, min(len(segments), i + 1 + CONTEXTE))]
         if avant:
             lignes += ["", "Previous lines (already translated, for context only):", *avant]
         if apres:
             lignes += ["", "Next lines (for context only, do not translate):", *apres]
+    lignes += ["", *_lignes_de_scene(seg)]
     lignes += [
-        "",
         f'LINE TO TRANSLATE: "{seg["texte"]}"',
         f"Target length: about {syllabes} syllables "
         f"(between {max(1, round(syllabes * 0.85))} and {round(syllabes * 1.15)}).",

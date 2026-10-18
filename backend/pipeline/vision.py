@@ -82,6 +82,23 @@ def _modeles() -> tuple[Path, Path]:
     return reperes, arcface
 
 
+# Expressions du visage (formes MediaPipe, moyenne gauche/droite)
+EXPRESSIONS = ("sourire", "moue", "froncement", "sourcils_hauts", "yeux_ecarquilles")
+
+
+def _expression(formes: dict[str, float]) -> list[float]:
+    def moyenne(*noms: str) -> float:
+        return round(float(np.mean([formes.get(nom, 0.0) for nom in noms])), 3)
+
+    return [
+        moyenne("mouthSmileLeft", "mouthSmileRight"),
+        moyenne("mouthFrownLeft", "mouthFrownRight"),
+        moyenne("browDownLeft", "browDownRight"),
+        moyenne("browInnerUp"),
+        moyenne("eyeWideLeft", "eyeWideRight"),
+    ]
+
+
 def _histogramme(image: np.ndarray, x0: float, y0: float, x1: float, y1: float) -> np.ndarray | None:
     """Histogramme de couleurs (HSV) d'une zone de l'image, normalisé."""
     import cv2
@@ -95,8 +112,10 @@ def _histogramme(image: np.ndarray, x0: float, y0: float, x1: float, y1: float) 
     return histo / (histo.sum() or 1.0)
 
 
-def _lire_pistes(video: Path, on_progress: Callable[[float], None] | None, duree_s: float | None) -> list[dict]:
-    """Lit la vidéo et renvoie les pistes de visages (un visage suivi dans un plan)."""
+def _lire_pistes(video: Path, on_progress: Callable[[float], None] | None,
+                 duree_s: float | None) -> tuple[list[dict], list[int]]:
+    """Lit la vidéo et renvoie les pistes de visages (un visage suivi dans un plan) et l'image de
+    début de chaque plan."""
     import cv2
     import mediapipe as mp
     import onnxruntime as ort
@@ -123,6 +142,7 @@ def _lire_pistes(video: Path, on_progress: Callable[[float], None] | None, duree
     pistes: list[dict] = []
     actives: list[dict] = []
     plan, precedente, n = 0, None, 0
+    debuts_plans = [0]
     try:
         with mp.tasks.vision.FaceLandmarker.create_from_options(options) as reperes:
             while len(brut := flux.stdout.read(octets)) == octets:  # type: ignore[union-attr]
@@ -131,6 +151,7 @@ def _lire_pistes(video: Path, on_progress: Callable[[float], None] | None, duree
                 reduite = cv2.resize(image, (32, 32)).astype(np.float32)
                 if precedente is not None and np.abs(reduite - precedente).mean() > SEUIL_PLAN:
                     plan += 1
+                    debuts_plans.append(n)
                     actives = []
                 precedente = reduite
                 resultat = reperes.detect_for_video(mp.Image(image_format=mp.ImageFormat.SRGB, data=image),
@@ -142,7 +163,8 @@ def _lire_pistes(video: Path, on_progress: Callable[[float], None] | None, duree
                     if taille < TAILLE_MIN_VISAGE:
                         continue
                     cx, cy = float(P[:, 0].mean()), float(P[:, 1].mean())
-                    machoire = next((b.score for b in resultat.face_blendshapes[k] if b.category_name == "jawOpen"), 0.0)
+                    formes = {b.category_name: b.score for b in resultat.face_blendshapes[k]}
+                    machoire = formes.get("jawOpen", 0.0)
                     cinq = np.array([(P[33] + P[133]) / 2, (P[362] + P[263]) / 2, P[1], P[61], P[291]], dtype=np.float32)
                     M, _ = cv2.estimateAffinePartial2D(cinq, GABARIT_ARCFACE)
                     alignee = cv2.warpAffine(image, M, (112, 112)).astype(np.float32)
@@ -150,6 +172,7 @@ def _lire_pistes(video: Path, on_progress: Callable[[float], None] | None, duree
                     largeur = float(P[:, 0].max() - P[:, 0].min())
                     detection = {
                         "n": n, "cx": cx, "cy": cy, "taille": taille, "machoire": round(float(machoire), 4),
+                        "expression": _expression(formes),
                         "e": e / (np.linalg.norm(e) or 1.0),
                         "cheveux": _histogramme(image, cx - largeur * 0.7, P[10][1] - taille * 0.6,
                                                 cx + largeur * 0.7, P[10][1] + taille * 0.1),
@@ -185,7 +208,7 @@ def _lire_pistes(video: Path, on_progress: Callable[[float], None] | None, duree
     finally:
         flux.kill()
     logger.info("Lecture des scènes : %d images, %d plans, %d pistes de visages", n, plan + 1, len(pistes))
-    return [p for p in pistes if len(p["d"]) >= 3]
+    return [p for p in pistes if len(p["d"]) >= 3], debuts_plans
 
 
 def _decouper(image: np.ndarray, x0: float, y0: float, x1: float, y1: float) -> np.ndarray | None:
@@ -274,12 +297,15 @@ def analyser(video: Path, dossier_projet: Path, duree_s: float | None = None,
     cache = dossier_projet / "vision.json"
     if cache.is_file():
         return json.loads(cache.read_text(encoding="utf-8"))
-    pistes = _lire_pistes(video, on_progress, duree_s)
+    pistes, debuts_plans = _lire_pistes(video, on_progress, duree_s)
     persos = _personnages(pistes)
     resultat = {
         "ips": IMAGES_PAR_S,
         "personnages": len(set(persos)),
-        "pistes": [{"perso": int(g), "images": [d["n"] for d in p["d"]], "machoire": [d["machoire"] for d in p["d"]]}
+        # Début (en images) de chaque plan : sert à décrire les scènes
+        "plans": debuts_plans,
+        "pistes": [{"perso": int(g), "images": [d["n"] for d in p["d"]], "machoire": [d["machoire"] for d in p["d"]],
+                    "expressions": [d["expression"] for d in p["d"]]}
                    for p, g in zip(pistes, persos, strict=True)],
     }
     _vignettes(video, dossier_projet, pistes, persos)

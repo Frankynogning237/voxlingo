@@ -7,6 +7,7 @@ import {
   BookText,
   Check,
   CircleCheck,
+  Clapperboard,
   EllipsisVertical,
   Pause,
   Play,
@@ -26,6 +27,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { Panel, Switch } from '@/components/Controls'
 import { EditorTimeline, type PisteLocuteur } from '@/components/EditorTimeline'
+import { FICHE_VIDE, FicheVideo } from '@/components/FicheVideo'
 import { GlossaireConsignes } from '@/components/GlossaireConsignes'
 import { BottomPanel, SystemStatus, UserFooter } from '@/components/Layout'
 import { PrimaryButton } from '@/components/PrimaryButton'
@@ -40,7 +42,14 @@ import {
   saveTranslations,
   validateTranslations,
   adjustTranslations,
+  analyzeScene,
   type BilanAjustement,
+  type Emotion,
+  type EmotionPhrase,
+  type FicheVideo as Fiche,
+  type Intensite,
+  setSegmentEmotion,
+  setVideoSheet,
   type StrategieDuree,
   setStrategy,
   setTranslationRules,
@@ -207,6 +216,93 @@ function BadgeTon({ ton, corrige, onChange }: { ton: Ton; corrige: boolean; onCh
   )
 }
 
+// Émotion de la phrase, comprise par l'IA en écoutant la voix et en regardant le visage
+const EMOTIONS: Record<Emotion, { libelle: string; emoji: string; classe: string }> = {
+  neutre: { libelle: 'Neutre', emoji: '😐', classe: 'border-white/15 text-white/60' },
+  joie: { libelle: 'Joie', emoji: '😄', classe: 'border-amber-400/50 text-amber-200' },
+  colère: { libelle: 'Colère', emoji: '😠', classe: 'border-red-400/60 text-red-200' },
+  tristesse: { libelle: 'Tristesse', emoji: '😢', classe: 'border-sky-400/50 text-sky-200' },
+  peur: { libelle: 'Peur', emoji: '😨', classe: 'border-indigo-400/50 text-indigo-200' },
+  surprise: { libelle: 'Surprise', emoji: '😲', classe: 'border-fuchsia-400/50 text-fuchsia-200' },
+  dégoût: { libelle: 'Dégoût', emoji: '🤢', classe: 'border-lime-400/50 text-lime-200' },
+}
+const INTENSITES: Intensite[] = ['légère', 'moyenne', 'forte']
+
+/** Émotion et manière de dire de la phrase d'origine ; un clic permet de la corriger. */
+function BadgeEmotion({ emotion, onChange }: { emotion: EmotionPhrase; onChange: (e: Emotion, i: Intensite) => void }) {
+  const [ouvert, setOuvert] = useState(false)
+  const infos = EMOTIONS[emotion.emotion] ?? EMOTIONS.neutre
+  const details = [...(emotion.maniere ?? []), ...(emotion.visage ? [emotion.visage] : [])]
+  return (
+    <div className="relative px-2 pt-1">
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation()
+          setOuvert(!ouvert)
+        }}
+        title={`Émotion comprise par l'IA (voix${emotion.visage ? ' et visage' : ''})${emotion.corrigee ? ', corrigée à la main' : ''}. Elle guide la traduction et la voix doublée. Cliquez pour corriger.`}
+        className={cn('inline-flex max-w-full items-center gap-1.5 truncate rounded-full border px-2.5 py-0.5 text-[12px]', infos.classe)}
+      >
+        <span aria-hidden>{infos.emoji}</span>
+        {infos.libelle}
+        {emotion.emotion !== 'neutre' && <span className="text-white/45">· {emotion.intensite}</span>}
+        {details.length > 0 && <span className="truncate text-white/45">· {details.join(', ')}</span>}
+      </button>
+      <AnimatePresence>
+        {ouvert && (
+          <motion.div
+            initial={{ opacity: 0, scale: 0.96, y: 4 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0 }}
+            transition={voxTransition(0.2)}
+            onMouseLeave={() => setOuvert(false)}
+            onClick={(e) => e.stopPropagation()}
+            className="absolute top-8 left-2 z-30 w-52 rounded-xl border border-white/12 bg-popover p-1.5 shadow-2xl"
+          >
+            {(Object.keys(EMOTIONS) as Emotion[]).map((e) => (
+              <button
+                key={e}
+                type="button"
+                onClick={() => {
+                  setOuvert(false)
+                  if (e !== emotion.emotion) onChange(e, emotion.intensite)
+                }}
+                className="flex w-full items-center justify-between rounded-lg px-3 py-1.5 text-left text-[14px] text-white hover:bg-white/5"
+              >
+                <span>
+                  {EMOTIONS[e].emoji} {EMOTIONS[e].libelle}
+                </span>
+                {e === emotion.emotion && <Check className="size-4" />}
+              </button>
+            ))}
+            {emotion.emotion !== 'neutre' && (
+              <div className="mt-1 flex gap-1 border-t border-white/10 pt-1.5">
+                {INTENSITES.map((i) => (
+                  <button
+                    key={i}
+                    type="button"
+                    onClick={() => {
+                      setOuvert(false)
+                      if (i !== emotion.intensite) onChange(emotion.emotion, i)
+                    }}
+                    className={cn(
+                      'flex-1 rounded-lg px-1.5 py-1 text-[12px]',
+                      i === emotion.intensite ? 'bg-violet-500/25 text-white' : 'text-white/70 hover:bg-white/5',
+                    )}
+                  >
+                    {i}
+                  </button>
+                ))}
+              </div>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  )
+}
+
 const LIBELLES_AJUSTEMENT = {
   raccourcie: { texte: 'Reformulée', aide: "Traduction reformulée plus brièvement par l'IA, dans le même sens, pour tenir dans le temps." },
   decoupee: { texte: 'Découpée', aide: 'Phrase redécoupée aux pauses naturelles, chaque morceau calé sur son moment.' },
@@ -317,6 +413,7 @@ function SegmentRow({
   onRevert,
   onAdjust,
   onTone,
+  onEmotion,
   original,
   originalModifie,
   onChangeOriginal,
@@ -339,6 +436,7 @@ function SegmentRow({
   locuteurs: PisteLocuteur[]
   onSpeaker: (code: string) => void
   onTone: (ton: Ton) => void
+  onEmotion: (emotion: Emotion, intensite: Intensite) => void
   original: string
   originalModifie: boolean
   onChangeOriginal: (v: string) => void
@@ -373,6 +471,7 @@ function SegmentRow({
         {!originalModifie && !seg.a_retraduire && seg.texte_corrige && (
           <p className="px-2 text-[12px] text-white/45">Transcription corrigée</p>
         )}
+        {seg.emotion && <BadgeEmotion emotion={seg.emotion} onChange={onEmotion} />}
       </div>
       <ArrowRight className="size-4 text-white/60" />
       <AutoTextarea value={traduction} onChange={onChange} onFocus={onSelect} label={`Traduction du segment ${seg.id + 1}`} />
@@ -522,6 +621,9 @@ export function TranslationEditor({ job }: { job: Job }) {
   const [glossaire, setGlossaire] = useState(job.options.glossaire ?? '')
   const [consignes, setConsignes] = useState(job.options.consignes ?? '')
   const reglesModifiees = glossaire.trim() !== (job.options.glossaire ?? '') || consignes.trim() !== (job.options.consignes ?? '')
+  // Fiche de la vidéo (ce que l'IA a compris de la scène), corrigeable
+  const [ficheOuverte, setFicheOuverte] = useState(false)
+  const [ficheBrouillon, setFicheBrouillon] = useState<Fiche | null>(null)
   const [message, setMessage] = useState<{ type: 'succes' | 'erreur'; texte: string } | null>(null)
 
   const segments = useMemo(() => data?.segments ?? [], [data])
@@ -669,12 +771,46 @@ export function TranslationEditor({ job }: { job: Job }) {
     onSuccess: (d) => queryClient.setQueryData(['segments', job.id], d),
     onError: (e) => notifier('erreur', (e as Error).message),
   })
+  const changerEmotion = useMutation({
+    mutationFn: ({ segId, emotion, intensite }: { segId: number; emotion: Emotion; intensite: Intensite }) =>
+      setSegmentEmotion(job.id, segId, emotion, intensite),
+    onSuccess: (d) => queryClient.setQueryData(['segments', job.id], d),
+    onError: (e) => notifier('erreur', (e as Error).message),
+  })
+  const enregistrerFiche = useMutation({
+    // Enregistre la fiche corrigée, puis (sur demande) retraduit toutes les phrases avec
+    mutationFn: async (retraduireTout: boolean) => {
+      const { genre, resume, registre, ton, personnages } = ficheBrouillon ?? data?.fiche ?? FICHE_VIDE
+      const d = await setVideoSheet(job.id, { genre, resume, registre, ton, personnages })
+      queryClient.setQueryData(['segments', job.id], d)
+      return retraduireTout ? retranslate(job.id) : null
+    },
+    onSuccess: (j, retraduireTout) => {
+      setFicheBrouillon(null)
+      if (j) {
+        queryClient.setQueryData(['job', job.id], j)
+        setBrouillon({})
+        setOriginaux({})
+        void queryClient.invalidateQueries({ queryKey: ['job', job.id] })
+      }
+      notifier('succes', retraduireTout ? 'Fiche enregistrée : nouvelle traduction en cours.' : 'Fiche de la vidéo enregistrée.')
+    },
+    onError: (e) => notifier('erreur', (e as Error).message),
+  })
+  const analyser = useMutation({
+    mutationFn: () => analyzeScene(job.id),
+    onSuccess: (j) => {
+      queryClient.setQueryData(['job', job.id], j)
+      void queryClient.invalidateQueries({ queryKey: ['job', job.id] })
+    },
+    onError: (e) => notifier('erreur', (e as Error).message),
+  })
   const changerLocuteur = useMutation({
     mutationFn: ({ segId, code }: { segId: number; code: string }) => setSegmentSpeaker(job.id, segId, code),
     onSuccess: (d) => queryClient.setQueryData(['segments', job.id], d),
     onError: (e) => notifier('erreur', (e as Error).message),
   })
-  const occupe = enregistrerRegles.isPending || retraduireCorrigees.isPending || changerStrategie.isPending || ajuster.isPending || enregistrer.isPending || valider.isPending || reinitialiser.isPending || retraduire.isPending
+  const occupe = enregistrerFiche.isPending || analyser.isPending || enregistrerRegles.isPending || retraduireCorrigees.isPending || changerStrategie.isPending || ajuster.isPending || enregistrer.isPending || valider.isPending || reinitialiser.isPending || retraduire.isPending
 
   // Le segment sous le curseur de lecture est mis en évidence dans le tableau
   const segmentLu = segments.find((s) => clock.temps >= s.debut && clock.temps < s.fin)
@@ -800,6 +936,19 @@ export function TranslationEditor({ job }: { job: Job }) {
           <BookText className="size-5 text-violet-300" /> Glossaire
           {(job.options.glossaire || job.options.consignes) && <span className="size-2 rounded-full bg-violet-400" />}
         </button>
+        <button
+          type="button"
+          onClick={() => setFicheOuverte(!ficheOuverte)}
+          aria-expanded={ficheOuverte}
+          title="Ce que l'IA a compris en regardant et en écoutant la vidéo : genre, personnages, registre, ton"
+          className={cn(
+            'flex h-11 items-center gap-2.5 rounded-xl border px-5 text-[15px] whitespace-nowrap text-white transition-colors duration-200',
+            ficheOuverte ? 'border-violet-400/70 bg-violet-500/10' : 'border-white/15 hover:border-white/30',
+          )}
+        >
+          <Clapperboard className="size-5 text-violet-300" /> Fiche
+          {data?.fiche && <span className="size-2 rounded-full bg-violet-400" />}
+        </button>
         <a
           href={href({ page: 'locuteurs', id: job.id })}
           className="flex h-11 items-center gap-2.5 rounded-xl border border-white/15 px-5 text-[15px] text-white transition-colors duration-200 hover:border-white/30"
@@ -842,6 +991,61 @@ export function TranslationEditor({ job }: { job: Job }) {
                   disabled={occupe}
                   onClick={() => enregistrerRegles.mutate(true)}
                   title="Remplace toutes les traductions (y compris vos modifications) par une nouvelle traduction qui suit ces consignes"
+                  className="h-10 rounded-xl bg-brand-gradient px-4 text-[14px] font-medium text-white disabled:opacity-45"
+                >
+                  Enregistrer et retraduire tout
+                </button>
+              </div>
+            </Panel>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence initial={false}>
+        {ficheOuverte && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={voxTransition(0.25)}
+            className="mb-4 overflow-hidden"
+          >
+            <Panel className="flex flex-col gap-4 px-5 py-4">
+              {!data?.fiche && !ficheBrouillon && (
+                <p className="text-[13px] text-white/60">
+                  Pas encore de fiche pour cette vidéo : lancez « Analyser la scène » pour que l'IA regarde et écoute la vidéo,
+                  ou remplissez-la vous-même.
+                </p>
+              )}
+              <FicheVideo
+                fiche={ficheBrouillon ?? data?.fiche ?? FICHE_VIDE}
+                scenes={data?.scenes ?? []}
+                onChange={setFicheBrouillon}
+                disabled={occupe}
+              />
+              <div className="flex flex-wrap items-center justify-end gap-3">
+                <button
+                  type="button"
+                  disabled={occupe}
+                  onClick={() => analyser.mutate()}
+                  title="L'IA réécoute les émotions de chaque phrase et redécrit les scènes (une fiche corrigée à la main est conservée)"
+                  className="mr-auto flex h-10 items-center gap-2 rounded-xl border border-white/15 px-4 text-[14px] text-white hover:border-white/30 disabled:opacity-45"
+                >
+                  <Sparkles className="size-4 text-violet-300" /> Analyser la scène
+                </button>
+                <button
+                  type="button"
+                  disabled={occupe || !ficheBrouillon}
+                  onClick={() => enregistrerFiche.mutate(false)}
+                  className="h-10 rounded-xl border border-white/15 px-4 text-[14px] text-white hover:border-white/30 disabled:opacity-45"
+                >
+                  Enregistrer
+                </button>
+                <button
+                  type="button"
+                  disabled={occupe}
+                  onClick={() => enregistrerFiche.mutate(true)}
+                  title="Remplace toutes les traductions (y compris vos modifications) par une nouvelle traduction qui s'appuie sur cette fiche"
                   className="h-10 rounded-xl bg-brand-gradient px-4 text-[14px] font-medium text-white disabled:opacity-45"
                 >
                   Enregistrer et retraduire tout
@@ -896,6 +1100,7 @@ export function TranslationEditor({ job }: { job: Job }) {
                 locuteurs={pistes}
                 onSpeaker={(code) => changerLocuteur.mutate({ segId: seg.id, code })}
                 onTone={(ton) => changerTon.mutate({ segId: seg.id, ton })}
+                onEmotion={(emotion, intensite) => changerEmotion.mutate({ segId: seg.id, emotion, intensite })}
                 original={originaux[seg.id] ?? seg.texte}
                 originalModifie={originalModifie(seg)}
                 onChangeOriginal={(v) => setOriginaux((o) => ({ ...o, [seg.id]: v }))}

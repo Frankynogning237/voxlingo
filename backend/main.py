@@ -927,6 +927,56 @@ def set_segment_tone(job_id: str, seg_id: int, choix: ChoixTon) -> dict:
     return data
 
 
+class ChoixEmotion(BaseModel):
+    emotion: Literal["neutre", "joie", "colère", "tristesse", "peur", "surprise", "dégoût"]
+    intensite: Literal["légère", "moyenne", "forte"] = "moyenne"
+
+
+@app.put("/jobs/{job_id}/segments/{seg_id}/emotion")
+def set_segment_emotion(job_id: str, seg_id: int, choix: ChoixEmotion) -> dict:
+    """Corrige l'émotion d'une phrase : elle guide la traduction et l'expressivité de la voix."""
+    _, data = _segments_modifiables(job_id)
+    seg = next((s for s in data["segments"] if s["id"] == seg_id), None)
+    if seg is None:
+        raise HTTPException(404, "Phrase introuvable.")
+    seg["emotion"] = {**(seg.get("emotion") or {"maniere": [], "visage": None, "confiance": 1.0}),
+                      "emotion": choix.emotion, "intensite": choix.intensite, "corrigee": True}
+    jobs.write_segments(job_id, data)
+    return data
+
+
+class PersonnageFiche(BaseModel):
+    locuteur: str = Field(max_length=100)
+    description: str = Field(max_length=1000)
+
+
+class Fiche(BaseModel):
+    genre: str = Field("", max_length=300)
+    resume: str = Field("", max_length=2000)
+    registre: str = Field("", max_length=500)
+    ton: str = Field("", max_length=500)
+    personnages: list[PersonnageFiche] = Field(default_factory=list, max_length=40)
+
+
+@app.post("/jobs/{job_id}/analyser")
+def analyse_scene(job_id: str) -> dict:
+    """(Re)lance l'analyse de la scène : émotions de chaque phrase, description des scènes, fiche."""
+    _segments_modifiables(job_id)
+    status = jobs.update_status(job_id, etat="en_attente")
+    jobs.start_analysis(job_id)
+    return status
+
+
+@app.put("/jobs/{job_id}/fiche")
+def set_fiche(job_id: str, fiche: Fiche) -> dict:
+    """Corrige la fiche de la vidéo (genre, résumé, registre, ton, personnages) : la traduction
+    s'appuie dessus ; elle n'est plus réécrite par l'IA."""
+    _, data = _segments_modifiables(job_id)
+    data["fiche"] = {**fiche.model_dump(), "corrigee": True}
+    jobs.write_segments(job_id, data)
+    return data
+
+
 @app.post("/jobs/{job_id}/locuteurs/detecter")
 def detect_speakers(job_id: str) -> dict:
     """(Re)lance l'identification des locuteurs d'un projet déjà transcrit."""

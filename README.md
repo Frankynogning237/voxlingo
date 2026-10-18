@@ -86,6 +86,16 @@ La traduction se fait phrase par phrase avec Ollama (`qwen2.5:3b` en mode CPU, `
 
 Le traitement s'arrête ensuite sur l'écran **Édition de la traduction** : chaque traduction est modifiable, l'alerte « Trop long » signale les phrases que la voix ne pourra pas prononcer dans le temps d'origine (plus de 25 % de syllabes en plus), et « Valider et générer les voix » lance la suite.
 
+## Analyse de la scène (regarder et écouter avant de traduire)
+
+Avant de traduire, l'étape **Analyse de la scène** comprend la vidéo pour que la traduction reste dans la scène plutôt que mot à mot :
+
+- **émotion de chaque phrase** d'après la voix (emotion2vec+, paquet `funasr` : joie, colère, tristesse, peur, surprise, dégoût, neutre), la **manière de dire** comparée aux habitudes du même locuteur (crie, chuchote, rapide, monocorde…) et l'**expression du visage** de celui qui parle (sourit, fronce les sourcils…) ;
+- **description des scènes** : un modèle de vision (`qwen2.5vl:7b` via Ollama, sur GPU seulement ; réglage `MODELE_VISION`, `aucun` pour le désactiver) décrit une image de chaque plan ;
+- **fiche de la vidéo** rédigée par l'IA : genre, résumé, registre de langue, ton, personnages et relations.
+
+Chaque phrase est ensuite traduite avec la fiche, la scène en cours, qui parle et avec quelle émotion ; l'émotion règle aussi l'expressivité de la voix doublée. Dans l'éditeur, l'émotion de chaque phrase se corrige d'un clic, et le bouton **Fiche** permet de relire et corriger la fiche, de relancer l'analyse ou de tout retraduire avec la fiche corrigée.
+
 ## Voix doublée
 
 Après « Valider et générer les voix », VoxLingo :

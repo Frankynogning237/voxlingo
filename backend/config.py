@@ -62,6 +62,8 @@ class Settings(BaseSettings):
     whisper_model: str | None = None
     ollama_model: str | None = None
     ollama_url: str = "http://localhost:11434"
+    # Modèle de vision qui décrit les scènes (Ollama) ; vide = automatique (GPU seulement), « aucun » = désactivé
+    modele_vision: str | None = None
     nllb_model: str = "facebook/nllb-200-distilled-600M"
     xtts_model: str = "tts_models/multilingual/multi-dataset/xtts_v2"
 
@@ -117,6 +119,10 @@ class Runtime:
             "qwen2.5:7b" if self.mode == "gpu_local" else "qwen2.5:3b"
         )
         self.lipsync_local = self.mode == "gpu_local"
+        # Description des scènes : trop lente sur un simple processeur, réservée au GPU par défaut
+        self.modele_vision = settings.modele_vision or ("qwen2.5vl:7b" if self.device == "cuda" else None)
+        if (self.modele_vision or "").lower() in ("aucun", "none", "non"):  # désactivé explicitement
+            self.modele_vision = None
 
         if self.device == "cpu":
             logger.warning(

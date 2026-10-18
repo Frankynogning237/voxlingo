@@ -18,4 +18,5 @@ speechbrain>=1.0
 pyannote.audio>=4.0  # identification des locuteurs (jeton Hugging Face)
 mediapipe>=0.10  # lecture des scènes : visages et lèvres
 onnxruntime>=1.18  # empreinte des visages (ArcFace)
+funasr>=1.1  # émotions de la voix (emotion2vec+), facultatif
 pytest>=8
