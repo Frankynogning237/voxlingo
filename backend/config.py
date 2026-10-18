@@ -82,6 +82,8 @@ class Settings(BaseSettings):
     # d'écriture et dépôt dataset privé (par défaut « votre-compte/voxlingo-sauvegarde »)
     hf_token_ecriture: str | None = None
     hf_depot_sauvegarde: str | None = None
+    # Python de l'environnement séparé de Chatterbox (voix plus expressive, PyTorch 2.6) ; vide = XTTS seul
+    chatterbox_python: str | None = None
 
     # Accès à distance (moteur sur Kaggle/Colab, interface sur Vercel).
     # Clé d'accès : si elle est définie, chaque requête doit la fournir.
@@ -138,6 +140,7 @@ PARAMETRES_DEFAUT: dict[str, object] = {
     "force_device": "auto",
     "whisper_model": "auto",
     "ollama_model": "auto",
+    "moteur_voix": "auto",  # auto : Chatterbox s'il est installé, sinon XTTS v2
     "strategie_duree": "reformuler",
     "sous_titres": True,
     "conserver_fond": True,

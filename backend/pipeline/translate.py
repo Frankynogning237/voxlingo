@@ -85,7 +85,7 @@ class TranslationError(RuntimeError):
 # ───────────────────────────── Ollama ─────────────────────────────
 
 def ollama_disponible(modele: str) -> bool:
-    """Vrai si le serveur Ollama répond et que le modèle est téléchargé."""
+    """Vrai si le serveur Ollama répond et que le modèle est téléchargé (téléchargé au besoin)."""
     url = get_settings().ollama_url
     try:
         tags = httpx.get(f"{url}/api/tags", timeout=3).json()
@@ -93,10 +93,23 @@ def ollama_disponible(modele: str) -> bool:
         logger.warning("Ollama ne répond pas sur %s", url)
         return False
     noms = {m.get("name") for m in tags.get("models", [])}
-    if modele not in noms and f"{modele}:latest" not in noms:
-        logger.warning("Modèle %s absent d'Ollama (ollama pull %s)", modele, modele)
+    if modele in noms or f"{modele}:latest" in noms:
+        return True
+    # Modèle choisi dans les paramètres mais pas encore téléchargé (Qwen3 sur Kaggle…) : on le récupère
+    logger.info("Modèle %s absent d'Ollama : téléchargement (quelques minutes)…", modele)
+    try:
+        reponse = httpx.post(f"{url}/api/pull", json={"model": modele, "stream": False}, timeout=1800)
+        reponse.raise_for_status()
+    except httpx.HTTPError as exc:
+        logger.warning("Téléchargement de %s impossible (%s) : ollama pull %s", modele, exc, modele)
         return False
+    logger.info("Modèle %s téléchargé", modele)
     return True
+
+
+def options_modele(modele: str) -> dict[str, Any]:
+    """Qwen3 « réfléchit » avant de répondre : inutile (et lent) pour traduire une phrase."""
+    return {"think": False} if modele.startswith("qwen3") else {}
 
 
 # ───────────────────────── Glossaire et consignes du projet ─────────────────────────
@@ -263,6 +276,7 @@ def _traduire_ollama(client: httpx.Client, modele: str, prompt: str, temperature
             "stream": False,
             "options": {"temperature": temperature},
             "keep_alive": "2m",
+            **options_modele(modele),
         },
     )
     reponse.raise_for_status()
@@ -327,6 +341,7 @@ def raccourcir(client: httpx.Client, modele: str, original: str, traduction: str
             "stream": False,
             "options": {"temperature": 0.4},
             "keep_alive": "2m",
+            **options_modele(modele),
         },
     )
     reponse.raise_for_status()

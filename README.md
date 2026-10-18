@@ -84,6 +84,8 @@ au début du traitement, à l'image près.
 
 La traduction se fait phrase par phrase avec Ollama (`qwen2.5:3b` en mode CPU, `qwen2.5:7b` avec une carte NVIDIA ≥ 8 Go), en donnant au modèle les phrases voisines comme contexte et une longueur cible. Si Ollama ne répond pas, NLLB-200 prend le relais automatiquement.
 
+Dans **Paramètres → Modèle de traduction**, on peut choisir **Qwen3 14B** (licence Apache 2.0), le plus fin sur les dialogues et les nuances, conseillé sur GPU (Kaggle). Un modèle choisi mais absent d'Ollama est téléchargé automatiquement au premier usage (≈ 9 Go pour un 14B) ; le mode « réflexion » de Qwen3 est désactivé pour traduire vite.
+
 Le traitement s'arrête ensuite sur l'écran **Édition de la traduction** : chaque traduction est modifiable, l'alerte « Trop long » signale les phrases que la voix ne pourra pas prononcer dans le temps d'origine (plus de 25 % de syllabes en plus), et « Valider et générer les voix » lance la suite.
 
 ## Analyse de la scène (regarder et écouter avant de traduire)
@@ -100,14 +102,28 @@ Chaque phrase est ensuite traduite avec la fiche, la scène en cours, qui parle 
 
 Après « Valider et générer les voix », VoxLingo :
 
-1. extrait 6 à 15 s de la voix d'origine et la clone avec **XTTS v2** (modèle de 1,8 Go téléchargé une fois dans `models/tts`) ;
+1. extrait 6 à 15 s de la voix d'origine et la clone avec **Chatterbox** ou **XTTS v2** (voir ci-dessous) ;
 2. fait lire chaque phrase traduite par cette voix (les voix générées sont gardées en cache : après une correction, seules les phrases modifiées sont refaites) ;
 3. cale chaque voix sur son temps (accélération jusqu'à ×1,25, ralentissement jusqu'à ×0,85) et signale les phrases qui ne tiennent toujours pas ;
 4. assemble la piste, remplace l'audio de la vidéo **sans réencoder l'image**, et produit les sous-titres `.srt`.
 
 L'écran **Résultat** propose le comparateur avant/après, le téléchargement de la vidéo (MP4), des sous-titres (SRT) et de l'audio seul (MP3), et un retour à l'éditeur pour corriger puis régénérer.
 
-> Avec « Conserver le fond sonore », la musique et l'ambiance d'origine (séparées par Demucs) sont remixées sous la voix doublée.
+**Moteur de voix** (*Paramètres → Modèle de voix*) :
+- **Chatterbox Multilingual** (Resemble AI, licence MIT, 23 langues dont le français) : plus expressif, son intensité
+  (`exaggeration`) suit le ton et l'émotion de chaque phrase. Il exige PyTorch 2.6 : il vit dans son propre
+  environnement Python (`CHATTERBOX_PYTHON`), que le carnet Kaggle installe en arrière-plan (≈ 5 min ; XTTS est
+  utilisé en attendant). Les voix intégrées de la bibliothèque sont clonées à partir de leur aperçu.
+- **XTTS v2** (licence CPML, usage personnel) : toutes les langues proposées (dont tchèque et hongrois), seul moteur
+  si Chatterbox n'est pas installé, et relais automatique si Chatterbox échoue.
+
+« Automatique » (par défaut) prend Chatterbox dès qu'il est prêt et que la langue est couverte. Changer de moteur
+régénère les voix du projet à la prochaine génération.
+
+> Avec « Conserver le fond sonore », la musique et l'ambiance d'origine sont séparées de la voix puis remixées sous
+> la voix doublée. La séparation utilise **BS-RoFormer** (paquet facultatif `audio-separator`, modèle de 640 Mo
+> téléchargé une fois dans `models/audio-separator`), nettement plus propre que Demucs : moins d'écho de la voix
+> d'origine dans le fond et un échantillon de clonage plus net. Sans lui (ou s'il échoue), **Demucs** prend le relais.
 
 ## Locuteurs et voix
 

@@ -24,3 +24,32 @@ def test_consignes_ajoutees_au_prompt_seulement_dans_le_bloc():
     apres = _prompt(SEGMENTS, 0, "fr", "de", [])
     assert '"baraque" -> "Bude"' in dans_le_bloc and "Tutoiement." in dans_le_bloc
     assert "baraque\" ->" not in apres and "Tutoiement" not in apres
+
+
+def test_qwen3_sans_reflexion():
+    from pipeline.translate import options_modele
+
+    assert options_modele("qwen3:14b") == {"think": False}
+    assert options_modele("qwen2.5:14b") == {}
+
+
+def test_modele_absent_telecharge(monkeypatch):
+    from pipeline import translate
+
+    appels = []
+
+    class Reponse:
+        def __init__(self, donnees=None):
+            self.donnees = donnees
+
+        def json(self):
+            return self.donnees
+
+        def raise_for_status(self):
+            pass
+
+    monkeypatch.setattr(translate.httpx, "get", lambda url, **_: Reponse({"models": [{"name": "qwen2.5:7b"}]}))
+    monkeypatch.setattr(translate.httpx, "post", lambda url, json, **_: appels.append((url, json)) or Reponse())
+    assert translate.ollama_disponible("qwen2.5:7b") and appels == []
+    assert translate.ollama_disponible("qwen3:14b")
+    assert appels[0][0].endswith("/api/pull") and appels[0][1]["model"] == "qwen3:14b"

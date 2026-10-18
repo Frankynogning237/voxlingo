@@ -253,6 +253,7 @@ export type ValeursParametres = {
   force_device: 'auto' | 'cpu' | 'cuda'
   whisper_model: string
   ollama_model: string
+  moteur_voix: 'auto' | 'xtts' | 'chatterbox'
   strategie_duree: StrategieDuree
   sous_titres: boolean
   conserver_fond: boolean
@@ -262,7 +263,11 @@ export type ValeursParametres = {
 export type Parametres = {
   valeurs: ValeursParametres
   defauts: ValeursParametres
-  choix: { transcription: { valeur: string; libelle: string }[]; traduction: { valeur: string; libelle: string }[] }
+  choix: {
+    transcription: { valeur: string; libelle: string }[]
+    traduction: { valeur: string; libelle: string }[]
+    voix?: { valeur: string; libelle: string }[]
+  }
   materiel: {
     device: 'cuda' | 'cpu'
     gpu: string | null

@@ -194,17 +194,17 @@ export function Settings() {
           />
           <Choix
             libelle="Modèle de traduction"
-            aide="Qwen 2.5 7B traduit nettement mieux l'argot et les expressions que 3B, mais demande ~5 Go de RAM et est ~3 fois plus lent sur processeur (téléchargement de 4,7 Go la première fois)."
+            aide="Qwen 2.5 7B traduit nettement mieux l'argot et les expressions que 3B, mais demande ~5 Go de RAM et est ~3 fois plus lent sur processeur. Qwen3 14B, le plus fin, est conseillé sur GPU (Kaggle). Un modèle absent est téléchargé au premier usage."
             valeur={valeurs.ollama_model}
             options={choix.traduction}
             onChange={(v) => set('ollama_model', v)}
           />
           <Choix
             libelle="Modèle de voix (TTS)"
-            aide="XTTS v2 clone la voix d'origine à partir de 6 à 15 s d'enregistrement. Licence CPML : usage personnel non commercial."
-            valeur="xtts_v2"
-            options={[{ valeur: 'xtts_v2', libelle: 'XTTS v2 (voix clonée)' }]}
-            onChange={() => {}}
+            aide="Chatterbox (Resemble AI, licence MIT) est plus expressif : son intensité suit le ton et l'émotion de chaque phrase (23 langues). XTTS v2 couvre toutes les langues (licence CPML : usage personnel). Les deux clonent la voix à partir de 6 à 15 s d'enregistrement ; si Chatterbox échoue, XTTS prend le relais."
+            valeur={valeurs.moteur_voix ?? 'auto'}
+            options={choix.voix ?? [{ valeur: 'auto', libelle: 'Automatique' }]}
+            onChange={(v) => set('moteur_voix', v as ValeursParametres['moteur_voix'])}
           />
           <a
             href={href({ page: 'voix' })}

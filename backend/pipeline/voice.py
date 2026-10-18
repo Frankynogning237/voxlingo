@@ -161,6 +161,63 @@ def fichier_brut(dossier: Path, seg_id: int) -> Path:
     return dossier / f"brut_{seg_id:05d}.wav"
 
 
+# ───────────────────────── Chatterbox (voix plus expressive) ─────────────────────────
+
+# Langues de Chatterbox Multilingual (codes du moteur)
+LANGUES_CHATTERBOX = {"ar", "da", "de", "el", "en", "es", "fi", "fr", "he", "hi", "it", "ja", "ko", "ms", "nl",
+                      "no", "pl", "pt", "ru", "sv", "sw", "tr", "zh-cn"}
+_chatterbox_pret = False
+
+
+def chatterbox_disponible() -> bool:
+    """Vrai si l'environnement séparé de Chatterbox est installé (réglage CHATTERBOX_PYTHON).
+
+    Sur Kaggle il s'installe en arrière-plan : on revérifie à chaque génération tant qu'il n'est pas prêt."""
+    global _chatterbox_pret
+    python = get_settings().chatterbox_python
+    if _chatterbox_pret or not python or not Path(python).is_file():
+        return _chatterbox_pret
+    try:
+        _chatterbox_pret = subprocess.run([python, "-c", "import chatterbox.mtl_tts"],
+                                          capture_output=True, timeout=120).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return _chatterbox_pret
+
+
+def moteur_voix(langue: str) -> str:
+    """« chatterbox » ou « xtts », selon le réglage, la langue et ce qui est installé."""
+    from config import lire_parametres
+
+    choix = lire_parametres().get("moteur_voix", "auto")
+    if choix == "xtts" or langue not in LANGUES_CHATTERBOX:
+        return "xtts"
+    if chatterbox_disponible():
+        return "chatterbox"
+    if choix == "chatterbox":
+        logger.warning("Chatterbox demandé mais pas encore installé : XTTS v2 est utilisé.")
+    return "xtts"
+
+
+def voix_pour_chatterbox(voix: dict[int, str]) -> dict[int, str] | None:
+    """Chatterbox ne clone qu'un échantillon : une voix intégrée à XTTS (« xtts:<nom> ») est remplacée
+    par son aperçu enregistré. None si une voix n'a pas encore d'aperçu (XTTS sera utilisé)."""
+    from pipeline import voice_bank
+
+    apercus = {v["xtts"]: voice_bank.fichier_apercu(v["id"]) for v in voice_bank.lire_banque() if v.get("xtts")}
+    converties = {}
+    for ident, spec in voix.items():
+        base, sep, transformation = spec.partition("|")
+        if base.startswith("xtts:"):
+            apercu = apercus.get(base[5:])
+            if apercu is None or not apercu.is_file():
+                logger.info("Pas d'aperçu pour la voix %s : XTTS v2 est utilisé pour ce projet.", base[5:])
+                return None
+            base = f"ref:{apercu}"
+        converties[ident] = base + sep + transformation
+    return converties
+
+
 MEMOIRE_CONSEILLEE_GO = 3.0  # XTTS v2 sur processeur
 
 # Une seule génération XTTS à la fois : deux processus de 3 à 4 Go saturent la mémoire.
@@ -183,6 +240,7 @@ def generer_voix(
     voix: dict[int, str],
     dossier: Path,
     on_progress: Callable[[float], None] | None = None,
+    moteur: str | None = None,
 ) -> int:
     """Synthétise chaque segment traduit avec sa voix. Renvoie le nombre de phrases générées.
 
@@ -190,12 +248,23 @@ def generer_voix(
     d'origine clonée, ou voix personnelle de la bibliothèque) ou « xtts:<nom> » (voix
     intégrée à XTTS v2, voir pipeline/voice_bank.py).
 
-    La synthèse tourne dans un processus séparé (pipeline/voice_worker.py) : un manque de
-    mémoire n'arrête que ce processus, et devient un message d'erreur lisible.
+    La synthèse tourne dans un processus séparé (pipeline/voice_worker.py pour XTTS v2,
+    pipeline/chatterbox_worker.py pour Chatterbox) : un manque de mémoire n'arrête que ce
+    processus, et devient un message d'erreur lisible. Si Chatterbox échoue, XTTS prend le relais.
     """
     dossier.mkdir(parents=True, exist_ok=True)
+    voix_origine = voix
+    moteur = moteur or moteur_voix(langue)
+    if moteur == "chatterbox":
+        converties = voix_pour_chatterbox({s["id"]: voix[s["id"]] for s in segments})
+        if converties is None:
+            moteur = "xtts"
+        else:
+            voix = converties
+    # Le moteur fait partie de la voix : en changer régénère les phrases
+    cles = {s["id"]: voix[s["id"]] if moteur == "xtts" else f"chatterbox#{voix[s['id']]}" for s in segments}
     manifeste = Manifeste(dossier)
-    a_generer = [s for s in segments if not manifeste.a_jour(s, langue, voix[s["id"]], fichier_brut(dossier, s["id"]))]
+    a_generer = [s for s in segments if not manifeste.a_jour(s, langue, cles[s["id"]], fichier_brut(dossier, s["id"]))]
     logger.info("Voix : %d phrase(s) à générer, %d déjà à jour", len(a_generer), len(segments) - len(a_generer))
     if not a_generer:
         return 0
@@ -230,18 +299,32 @@ def generer_voix(
             if on_progress:
                 on_progress(0.0)  # point de contrôle : permet d'annuler pendant l'attente
     try:
-        return _lancer_xtts(tache, a_generer, par_id, manifeste, langue, voix, dossier, libre, on_progress)
+        if moteur == "chatterbox":
+            commande = [get_settings().chatterbox_python, "-X", "utf8",
+                        str(Path(__file__).resolve().parent / "chatterbox_worker.py"), str(tache)]
+        else:
+            commande = [sys.executable, "-X", "utf8", "-m", "pipeline.voice_worker", str(tache)]
+        try:
+            return _lancer_xtts(commande, moteur, tache, a_generer, par_id, manifeste, langue, voix, cles, dossier,
+                                libre, on_progress)
+        except VoiceError as exc:
+            if moteur != "chatterbox":
+                raise
+            logger.warning("Chatterbox a échoué (%s) : XTTS v2 prend le relais.", exc)
     finally:
         _file_xtts.release()
+    return generer_voix(segments, langue, voix_origine, dossier, on_progress, moteur="xtts")
 
 
-def _lancer_xtts(tache: Path, a_generer: list[dict[str, Any]], par_id: dict[int, dict[str, Any]],
-                 manifeste: "Manifeste", langue: str, voix: dict[int, str], dossier: Path, libre: float,
+def _lancer_xtts(commande: list[str], moteur: str, tache: Path, a_generer: list[dict[str, Any]],
+                 par_id: dict[int, dict[str, Any]], manifeste: "Manifeste", langue: str, voix: dict[int, str],
+                 cles: dict[int, str], dossier: Path, libre: float,
                  on_progress: Callable[[float], None] | None) -> int:
-    """Lance le processus XTTS et suit sa progression (appelé quand c'est le tour de cette génération)."""
-    logger.info("Chargement de XTTS v2 dans un processus séparé (%s)", get_runtime().device)
+    """Lance le processus de synthèse (XTTS ou Chatterbox) et suit sa progression."""
+    nom = "Chatterbox" if moteur == "chatterbox" else "XTTS v2"
+    logger.info("Chargement de %s dans un processus séparé (%s)", nom, get_runtime().device)
     processus = subprocess.Popen(
-        [sys.executable, "-X", "utf8", "-m", "pipeline.voice_worker", str(tache)],
+        commande,
         cwd=Path(__file__).resolve().parent.parent,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -253,13 +336,13 @@ def _lancer_xtts(tache: Path, a_generer: list[dict[str, Any]], par_id: dict[int,
         for ligne in processus.stdout:
             ligne = ligne.strip()
             if ligne == "PRET":
-                logger.info("XTTS chargé, génération de %d phrase(s)", len(a_generer))
+                logger.info("%s chargé, génération de %d phrase(s)", nom, len(a_generer))
             elif ligne.startswith("FAIT "):
                 _, ident, vitesse = ligne.split()
                 seg = par_id[int(ident)]
                 _, transformation = separer_spec(voix[seg["id"]])
                 transformer(fichier_brut(dossier, seg["id"]), transformation)  # voix d'enfant, de senior…
-                manifeste.noter(seg, langue, voix[seg["id"]], float(vitesse))
+                manifeste.noter(seg, langue, cles[seg["id"]], float(vitesse))
                 faits += 1
                 logger.info("Voix %d/%d (vitesse ×%s) : %s", faits, len(a_generer), vitesse, seg["traduction"][:60])
                 if on_progress:
@@ -273,7 +356,7 @@ def _lancer_xtts(tache: Path, a_generer: list[dict[str, Any]], par_id: dict[int,
 
     if processus.returncode != 0:
         erreurs = processus.stderr.read().strip()
-        logger.error("Processus XTTS terminé avec le code %s : %s", processus.returncode, erreurs[-1500:])
+        logger.error("Processus %s terminé avec le code %s : %s", nom, processus.returncode, erreurs[-1500:])
         message = next((l[7:] for l in reversed(erreurs.splitlines()) if l.startswith("ERREUR ")), None)
         if message is None or "memory" in message.lower() or "alloc" in message.lower():
             raise VoiceError(

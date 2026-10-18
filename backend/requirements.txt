@@ -14,6 +14,7 @@ librosa>=0.10
 scikit-learn>=1.4
 psutil>=5.9
 demucs>=4.0
+audio-separator>=0.40  # séparation voix/fond RoFormer, plus propre que Demucs (facultatif)
 speechbrain>=1.0
 pyannote.audio>=4.0  # identification des locuteurs (jeton Hugging Face)
 mediapipe>=0.10  # lecture des scènes : visages et lèvres

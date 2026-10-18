@@ -711,15 +711,28 @@ CHOIX_TRADUCTION = [
     {"valeur": "auto", "libelle": "Automatique"},
     {"valeur": "qwen2.5:3b", "libelle": "Qwen 2.5 3B (rapide)"},
     {"valeur": "qwen2.5:7b", "libelle": "Qwen 2.5 7B (meilleure qualité)"},
-    {"valeur": "qwen2.5:14b", "libelle": "Qwen 2.5 14B (la meilleure, GPU conseillé)"},
+    {"valeur": "qwen2.5:14b", "libelle": "Qwen 2.5 14B (très bonne, GPU conseillé)"},
+    {"valeur": "qwen3:14b", "libelle": "Qwen3 14B (la plus fine sur les dialogues, GPU conseillé)"},
     {"valeur": "nllb", "libelle": "NLLB-200 (sans Ollama)"},
 ]
+
+
+def _choix_voix() -> list[dict[str, str]]:
+    from pipeline.voice import chatterbox_disponible
+
+    absent = "" if chatterbox_disponible() else " — pas encore installé"
+    return [
+        {"valeur": "auto", "libelle": "Automatique (Chatterbox s'il est prêt, sinon XTTS v2)"},
+        {"valeur": "chatterbox", "libelle": f"Chatterbox (plus expressif, suit l'émotion){absent}"},
+        {"valeur": "xtts", "libelle": "XTTS v2 (voix clonée, toutes les langues)"},
+    ]
 
 
 class ValeursParametres(BaseModel):
     force_device: Literal["auto", "cpu", "cuda"]
     whisper_model: str
     ollama_model: str
+    moteur_voix: Literal["auto", "xtts", "chatterbox"] = "auto"
     strategie_duree: Literal["reformuler", "accelerer"]
     sous_titres: bool
     conserver_fond: bool
@@ -749,7 +762,7 @@ def _etat_parametres() -> dict:
     return {
         "valeurs": lire_parametres(),
         "defauts": PARAMETRES_DEFAUT,
-        "choix": {"transcription": CHOIX_TRANSCRIPTION, "traduction": CHOIX_TRADUCTION},
+        "choix": {"transcription": CHOIX_TRANSCRIPTION, "traduction": CHOIX_TRADUCTION, "voix": _choix_voix()},
         "materiel": {
             "device": runtime.device,
             "gpu": gpu,
