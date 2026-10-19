@@ -28,6 +28,8 @@ def test_tourne_faux_pour_un_processus_absent():
 def test_masquer_les_jetons():
     texte = "https://x-access-token:ghp_abc123@github.com et hf_AbCdEf123456"
     assert lancer_moteur.masquer(texte) == "https://x-access-token:***@github.com et hf_***"
+    journal = '"GET /jobs/ab12/video?cle=Xy_9-z&t=1 HTTP/1.1" 206 · /thumbnail?cle=Q2w HTTP'
+    assert lancer_moteur.masquer(journal) == '"GET /jobs/ab12/video?cle=***&t=1 HTTP/1.1" 206 · /thumbnail?cle=*** HTTP'
 
 
 def test_lien_de_connexion_encode_adresse_et_cle():

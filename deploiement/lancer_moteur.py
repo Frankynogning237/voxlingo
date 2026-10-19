@@ -42,8 +42,9 @@ FACULTATIFS = ("pyannote.audio", "mediapipe", "onnxruntime", "audio-separator", 
 
 
 def masquer(texte: str) -> str:
-    """Ne jamais afficher un jeton (GitHub, Hugging Face)."""
+    """Ne jamais afficher un jeton (GitHub, Hugging Face) ni la clé d'accès des adresses (?cle=…)."""
     texte = re.sub(r"x-access-token:[^@\s]+@", "x-access-token:***@", texte)
+    texte = re.sub(r"([?&]cle=)[^&\s\"']+", r"\1***", texte)
     return re.sub(r"hf_[A-Za-z0-9]{6,}", "hf_***", texte)
 
 
