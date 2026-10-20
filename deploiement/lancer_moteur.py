@@ -133,6 +133,20 @@ def cle_acces() -> str:
     return fichier.read_text(encoding="utf-8").strip()
 
 
+BLOQUE_APRES_S = 20 * 60  # un doublage dont l'état n'a pas bougé depuis 20 min est considéré figé
+
+
+def bloque(job: dict, maintenant: float | None = None) -> bool:
+    """Vrai si le doublage n'a plus donné signe de vie depuis BLOQUE_APRES_S (champ « maj_le »)."""
+    from datetime import datetime
+
+    try:
+        maj = datetime.fromisoformat(job["maj_le"]).timestamp()
+    except (KeyError, TypeError, ValueError):
+        return False  # pas de date : dans le doute, on ne coupe pas un traitement
+    return (maintenant if maintenant is not None else time.time()) - maj > BLOQUE_APRES_S
+
+
 def demarrer_moteur(cle: str) -> subprocess.Popen | None:
     import httpx
 
@@ -155,14 +169,21 @@ def demarrer_moteur(cle: str) -> subprocess.Popen | None:
                            capture_output=True, env=env | {"HF_HUB_DISABLE_PROGRESS_BARS": "1"})
         etape("Sauvegarde : " + masquer((r.stdout.strip() or r.stderr.strip()[-1000:]) or "aucune réponse"))
     try:  # relance pendant un doublage : on garde le moteur en marche plutôt que d'interrompre le traitement
-        occupes = [j["id"] for j in httpx.get("http://127.0.0.1:8000/jobs", headers={"X-Cle-Acces": cle},
-                                              timeout=5).json() if j["etat"] in ("en_cours", "en_attente")]
+        en_cours = [j for j in httpx.get("http://127.0.0.1:8000/jobs", headers={"X-Cle-Acces": cle},
+                                         timeout=5).json() if j["etat"] in ("en_cours", "en_attente")]
     except Exception:
-        occupes = []
+        en_cours = []
+    occupes = [j["id"] for j in en_cours if not bloque(j)]
     if occupes:
         etape(f"Doublage en cours ({', '.join(occupes)}) : le moteur déjà lancé est gardé tel quel.")
         return None
+    if en_cours:
+        etape(f"Doublage figé depuis plus de {BLOQUE_APRES_S // 60} min ({', '.join(j['id'] for j in en_cours)}) : "
+              "le moteur est relancé (le projet pourra être repris).")
     subprocess.run("pkill -f 'uvicorn main:app'", shell=True)  # relance : l'ancien moteur laisse la place
+    # Processus de synthèse ou de séparation restés orphelins (ils tiendraient encore le GPU)
+    subprocess.run("pkill -f '[p]ipeline.voice_worker|[c]hatterbox_worker.py|[d]emucs_worker|[r]oformer_worker'",
+                   shell=True)
     time.sleep(2)
     moteur = en_arriere_plan([sys.executable, "-m", "uvicorn", "main:app", "--host", "127.0.0.1", "--port", "8000"],
                              "/tmp/voxlingo.log", cwd=CODE / "backend", env=env)

@@ -36,3 +36,12 @@ def test_lien_de_connexion_encode_adresse_et_cle():
     lien = lancer_moteur.lien_de_connexion("https://abc.trycloudflare.com", "cl/é+1")
     assert lien.startswith(lancer_moteur.ADRESSE_VERCEL.rstrip("/") + "/?moteur=https%3A%2F%2Fabc.trycloudflare.com")
     assert "cle=cl%2F%C3%A9%2B1" in lien and lien.endswith("#/")
+
+
+def test_doublage_fige_detecte():
+    from datetime import datetime, timezone
+
+    maintenant = datetime(2026, 10, 20, 12, 0, tzinfo=timezone.utc).timestamp()
+    assert lancer_moteur.bloque({"maj_le": "2026-10-20T11:30:00+00:00"}, maintenant)  # 30 min sans nouvelles
+    assert not lancer_moteur.bloque({"maj_le": "2026-10-20T11:55:00+00:00"}, maintenant)
+    assert not lancer_moteur.bloque({}, maintenant)  # pas de date : on ne coupe pas
