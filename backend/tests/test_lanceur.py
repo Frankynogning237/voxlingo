@@ -43,5 +43,5 @@ def test_doublage_fige_detecte():
 
     maintenant = datetime(2026, 10, 20, 12, 0, tzinfo=timezone.utc).timestamp()
     assert lancer_moteur.bloque({"maj_le": "2026-10-20T11:30:00+00:00"}, maintenant)  # 30 min sans nouvelles
-    assert not lancer_moteur.bloque({"maj_le": "2026-10-20T11:55:00+00:00"}, maintenant)
+    assert not lancer_moteur.bloque({"maj_le": "2026-10-20T11:57:00+00:00"}, maintenant)
     assert not lancer_moteur.bloque({}, maintenant)  # pas de date : on ne coupe pas

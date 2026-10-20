@@ -133,7 +133,8 @@ def cle_acces() -> str:
     return fichier.read_text(encoding="utf-8").strip()
 
 
-BLOQUE_APRES_S = 20 * 60  # un doublage dont l'état n'a pas bougé depuis 20 min est considéré figé
+BLOQUE_APRES_S = 5 * 60  # un doublage dont l'état n'a pas bougé depuis 5 min est considéré figé : relancer le
+# carnet (« Run All ») arrête alors tout lui-même (ancien moteur, synthèse figée) et repart sur le code à jour
 
 
 def bloque(job: dict, maintenant: float | None = None) -> bool:
