@@ -13,9 +13,11 @@ from __future__ import annotations
 import json
 import logging
 import os
+import queue
 import subprocess
 import sys
 import threading
+import time
 from collections import deque
 from collections.abc import Callable
 from pathlib import Path
@@ -264,6 +266,10 @@ def voix_pour_chatterbox(voix: dict[int, str]) -> dict[int, str] | None:
 
 
 MEMOIRE_CONSEILLEE_GO = 3.0  # XTTS v2 sur processeur
+# Sans aucun signe du moteur au-delà de ces délais, la génération est arrêtée avec un message lisible
+# (au lieu de rester figée) : chargement du modèle (téléchargement compris), puis chaque phrase
+DELAI_CHARGEMENT_S = 20 * 60
+DELAI_PHRASE_S = 10 * 60
 
 # Une seule génération XTTS à la fois : deux processus de 3 à 4 Go saturent la mémoire.
 # Les suivantes attendent leur tour (projets, aperçus de la bibliothèque).
@@ -378,17 +384,52 @@ def _lancer_xtts(commande: list[str], moteur: str, tache: Path, a_generer: list[
         errors="replace",
         env={**os.environ, "TQDM_DISABLE": "1"},  # pas de barres de progression du moteur à chaque phrase
     )
-    # La sortie d'erreur est lue au fil de l'eau : sinon, une fois son tampon plein (≈ 64 Ko de messages
-    # du moteur), le processus de synthèse se bloque en écrivant et la génération ne progresse plus.
-    # Seules les dernières lignes sont gardées (mémoire bornée), pour le message d'erreur.
+    # Les deux sorties sont lues au fil de l'eau, chacune par son fil : sinon, une fois le tampon de la
+    # sortie d'erreur plein (≈ 64 Ko de messages du moteur), le processus se bloque en écrivant.
+    # Les messages du moteur sont recopiés dans le journal du serveur ; les dernières lignes sont gardées
+    # (mémoire bornée) pour le message d'erreur.
     erreurs_recentes: deque[str] = deque(maxlen=200)
-    lecteur = threading.Thread(target=lambda: erreurs_recentes.extend(processus.stderr), daemon=True)
-    lecteur.start()
-    faits = 0
-    try:
+
+    def lire_erreurs() -> None:
+        for ligne in processus.stderr:
+            erreurs_recentes.append(ligne)
+            if ligne.strip():
+                logger.info("[%s] %s", nom, ligne.rstrip()[:300])
+
+    evenements: queue.Queue[str | None] = queue.Queue()
+
+    def lire_sortie() -> None:
         for ligne in processus.stdout:
+            evenements.put(ligne)
+        evenements.put(None)  # fin du processus
+
+    lecteur = threading.Thread(target=lire_erreurs, daemon=True)
+    lecteur.start()
+    threading.Thread(target=lire_sortie, daemon=True).start()
+    faits, pret, dernier_signe = 0, False, time.monotonic()
+    try:
+        while True:
+            try:
+                ligne = evenements.get(timeout=5)
+            except queue.Empty:
+                if on_progress:
+                    on_progress(faits / len(a_generer))  # point de contrôle : « Annuler » reste possible
+                delai = DELAI_PHRASE_S if pret else DELAI_CHARGEMENT_S
+                if time.monotonic() - dernier_signe > delai:
+                    lecteur.join(timeout=2)
+                    raise VoiceError(
+                        f"{nom} ne répond plus depuis {delai // 60} min "
+                        f"({'phrase ' + str(faits + 1) if pret else 'chargement du modèle'}) : génération arrêtée. "
+                        "Les phrases déjà générées sont conservées ; relancez « Valider et générer les voix ». "
+                        "Derniers messages du moteur : " + " | ".join(l.strip() for l in list(erreurs_recentes)[-5:])
+                    )
+                continue
+            if ligne is None:
+                break
+            dernier_signe = time.monotonic()
             ligne = ligne.strip()
             if ligne == "PRET":
+                pret = True
                 logger.info("%s chargé, génération de %d phrase(s)", nom, len(a_generer))
             elif ligne.startswith("FAIT "):
                 _, ident, vitesse = ligne.split()

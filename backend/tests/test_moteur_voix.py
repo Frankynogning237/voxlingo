@@ -82,3 +82,25 @@ def test_synthese_ne_se_bloque_pas_sur_une_sortie_d_erreur_bavarde(tmp_path):
     faits = _lancer_xtts([sys.executable, str(moteur)], "xtts", tache, segments, {s["id"]: s for s in segments},
                          Manifeste(tmp_path), "fr", voix, voix, tmp_path, 8.0, None)
     assert faits == 3
+
+
+def test_moteur_muet_arrete_avec_un_message(tmp_path, monkeypatch):
+    """Un moteur qui ne donne plus signe de vie est arrêté avec un message lisible, au lieu de figer
+    la progression."""
+    import sys
+
+    from pipeline.voice import Manifeste, VoiceError, _lancer_xtts
+
+    monkeypatch.setattr(voice, "DELAI_PHRASE_S", 0)
+    moteur = tmp_path / "moteur_muet.py"
+    moteur.write_text("import sys, time\n"
+                      "print('PRET', flush=True)\n"
+                      "print('chargement des poids termine', file=sys.stderr, flush=True)\n"
+                      "time.sleep(60)\n", encoding="utf-8")
+    tache = tmp_path / "tache.json"
+    tache.write_text("{}", encoding="utf-8")
+    segments = [{"id": 0, "traduction": "phrase", "debut": 0.0, "fin": 1.0}]
+    voix = {0: "ref:x.wav"}
+    with pytest.raises(VoiceError, match="ne répond plus.*phrase 1.*chargement des poids termine"):
+        _lancer_xtts([sys.executable, str(moteur)], "xtts", tache, segments, {0: segments[0]},
+                     Manifeste(tmp_path), "fr", voix, voix, tmp_path, 8.0, None)
