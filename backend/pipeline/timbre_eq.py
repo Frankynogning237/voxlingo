@@ -7,7 +7,9 @@ locuteur (piste « voix isolée ») et celui de ses voix générées, par tiers 
 
 - la correction est centrée (moyenne nulle) : elle change la couleur, pas le volume, calé ensuite
   au décibel près (pipeline/niveau.py) ;
-- elle est lissée et plafonnée (±8 dB) : on rapproche le timbre sans déformer la voix.
+- elle est lissée et plafonnée (±3 dB) : on rapproche la couleur sans toucher à la voix.
+
+Désactivée par défaut (réglage EGALISATION_TIMBRE) : le clonage reproduit déjà le timbre.
 
 Seules les trames où la voix est présente comptent ; la lecture se fait par extraits (mémoire bornée).
 """
@@ -22,7 +24,7 @@ import numpy as np
 # Centres des bandes en tiers d'octave, de 80 Hz à 10 kHz (les voix générées s'arrêtent à 12 kHz)
 BANDES_HZ = [80, 100, 125, 160, 200, 250, 315, 400, 500, 630, 800, 1000, 1250, 1600, 2000, 2500,
              3150, 4000, 5000, 6300, 8000, 10000]
-CORRECTION_MAX_DB = 8.0
+CORRECTION_MAX_DB = 3.0
 DUREE_MAX_S = 60.0  # durée de voix analysée par locuteur, de chaque côté
 FENETRE = 2048
 

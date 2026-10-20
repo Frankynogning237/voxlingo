@@ -906,6 +906,8 @@ class Fusion(BaseModel):
 @app.post("/jobs/{job_id}/locuteurs/fusion")
 def merge_speakers(job_id: str, fusion: Fusion) -> list[dict]:
     """Fusionne deux locuteurs détectés à tort comme différents : `source` devient `cible`."""
+    from pipeline.voice import fichier_reference
+
     _, data = _segments_modifiables(job_id)
     fiche = jobs.locuteurs(data)
     if fusion.source not in fiche or fusion.cible not in fiche or fusion.source == fusion.cible:
@@ -916,7 +918,7 @@ def merge_speakers(job_id: str, fusion: Fusion) -> list[dict]:
     del fiche[fusion.source]
     data["locuteurs"] = fiche
     # L'échantillon de voix de la cible doit intégrer les nouvelles phrases
-    (jobs.project_dir(job_id) / "voix" / f"reference_{fusion.cible}.wav").unlink(missing_ok=True)
+    fichier_reference(jobs.project_dir(job_id) / "voix", fusion.cible).unlink(missing_ok=True)
     jobs.write_segments(job_id, data)
     return _fiche_locuteurs(data)
 
@@ -928,6 +930,8 @@ class ChoixLocuteur(BaseModel):
 @app.put("/jobs/{job_id}/segments/{seg_id}/locuteur")
 def set_segment_speaker(job_id: str, seg_id: int, choix: ChoixLocuteur) -> dict:
     """Change le locuteur d'une phrase (correction d'une erreur de détection)."""
+    from pipeline.voice import fichier_reference
+
     _, data = _segments_modifiables(job_id)
     if choix.locuteur not in jobs.locuteurs(data):
         raise HTTPException(400, "Locuteur inconnu.")
@@ -937,7 +941,7 @@ def set_segment_speaker(job_id: str, seg_id: int, choix: ChoixLocuteur) -> dict:
     ancien = jobs.locuteur(seg)
     seg["locuteur"] = choix.locuteur
     for code in (ancien, choix.locuteur):
-        (jobs.project_dir(job_id) / "voix" / f"reference_{code}.wav").unlink(missing_ok=True)
+        fichier_reference(jobs.project_dir(job_id) / "voix", code).unlink(missing_ok=True)
     jobs.write_segments(job_id, data)
     return data
 
@@ -1035,12 +1039,13 @@ def auto_assign_voices(job_id: str) -> list[dict]:
 def speaker_original(job_id: str, code: str) -> FileResponse:
     """Échantillon de la voix d'origine du locuteur (créé à la demande)."""
     from pipeline.runner import voix_des_locuteurs
+    from pipeline.voice import fichier_reference
 
     _get_status_or_404(job_id)
     data = jobs.read_segments(job_id)
     if code not in jobs.locuteurs(data):
         raise HTTPException(404, "Locuteur introuvable.")
-    chemin = jobs.project_dir(job_id) / "voix" / f"reference_{code}.wav"
+    chemin = fichier_reference(jobs.project_dir(job_id) / "voix", code)
     if not chemin.is_file():
         fiche = jobs.locuteurs(data)
         fiche[code] = {**fiche[code], "voix": "clone"}  # force l'extraction de l'échantillon d'origine
@@ -1057,6 +1062,7 @@ def speaker_timbre_preview(job_id: str, code: str, request: Request) -> FileResp
     import tempfile
 
     from pipeline import voice_bank
+    from pipeline.voice import fichier_reference
 
     _get_status_or_404(job_id)
     data = jobs.read_segments(job_id)
@@ -1068,7 +1074,7 @@ def speaker_timbre_preview(job_id: str, code: str, request: Request) -> FileResp
         source = voice_bank.fichier_apercu(choix["id"])
     else:
         speaker_original(job_id, code)  # crée l'échantillon d'origine si besoin
-        source = jobs.project_dir(job_id) / "voix" / f"reference_{code}.wav"
+        source = fichier_reference(jobs.project_dir(job_id) / "voix", code)
         if not source.is_file():
             source = jobs.project_dir(job_id) / "voix" / "reference.wav"
     reglages = {}

@@ -80,6 +80,9 @@ class Settings(BaseSettings):
     hf_token: str | None = None
     # Relecture du dialogue traduit (cohérence, accords, naturel) : plus fine, ≈ 1,5 fois plus longue
     relecture_traduction: bool = True
+    # Égalisation du timbre des voix clonées vers la piste voix isolée (désactivée : le clonage
+    # reproduit déjà le timbre, la double correction déformait les voix)
+    egalisation_timbre: bool = False
     # Sauvegarde automatique sur Hugging Face (moteur sur Kaggle/Colab) : jeton avec droit
     # d'écriture et dépôt dataset privé (par défaut « votre-compte/voxlingo-sauvegarde »)
     hf_token_ecriture: str | None = None

@@ -18,7 +18,9 @@ import numpy as np
 TRAME_S = 0.03  # 30 ms
 PLAGE_DB = 35.0  # trames plus faibles que (trame la plus forte − 35 dB) : silence, ignorées
 PLANCHER_DB = -60.0  # en dessous : silence absolu
-GAIN_MIN_DB, GAIN_MAX_DB = -30.0, 24.0  # au-delà, la mesure est suspecte (phrase quasi vide)
+# Au-delà, la mesure est suspecte (phrase quasi vide, autre voix ou musique dans l'extrait) ; un gain
+# trop fort ferait aussi travailler le limiteur au point de déformer la voix
+GAIN_MIN_DB, GAIN_MAX_DB = -24.0, 12.0
 
 
 def niveau_actif_db(signal: np.ndarray, taux: int) -> float | None:

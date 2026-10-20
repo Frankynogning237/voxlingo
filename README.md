@@ -113,11 +113,14 @@ L'écran **Résultat** propose le comparateur avant/après, le téléchargement 
 - **volume au décibel près** : pour chaque phrase, le niveau de la voix d'origine (piste voix isolée, silences
   exclus) est mesuré et la voix doublée y est calée exactement (`pipeline/niveau.py`) : une phrase criée reste
   criée, un chuchotement reste chuchoté, et l'équilibre voix / musique de la vidéo est conservé ;
-- **timbre** : pour chaque locuteur cloné, le spectre moyen de sa voix d'origine est comparé à celui de ses voix
-  générées, par tiers d'octave, et un égaliseur doux corrige l'écart (micro, pièce, voix plus sourde ou plus
-  brillante ; ±8 dB au plus, `pipeline/timbre_eq.py`) ;
-- **échantillon de clonage** : les phrases où un autre locuteur parle en même temps sont écartées, et chaque
-  extrait est ramené au même niveau, pour une empreinte vocale nette.
+- **timbre** : c'est le clonage lui-même qui le reproduit, à partir d'un échantillon de la voix d'origine. Une
+  égalisation supplémentaire vers la piste voix isolée existe (±3 dB, `pipeline/timbre_eq.py`) mais elle est
+  **désactivée** par défaut (`EGALISATION_TIMBRE=true` dans `.env` pour l'essayer) : la piste isolée garde la
+  réverbération et perd des aigus à la séparation, et la corriger dans ce sens éloignait les voix des originales ;
+- **échantillon de clonage** : les phrases où un autre locuteur parle en même temps sont écartées ; les extraits
+  sont gardés tels quels (un seul gain global, jamais d'écrêtage) pour que l'empreinte vocale reste fidèle.
+  Les échantillons faits par la version précédente (extraits renormalisés un à un) sont refaits automatiquement,
+  et les voix clonées régénérées, au prochain « Valider et générer les voix ».
 
 **Traduction** : le traducteur connaît le genre de chaque locuteur quand sa hauteur de voix est nette (accords
 corrects : « je suis prête »), puis une **relecture du dialogue entier** corrige les incohérences (noms,

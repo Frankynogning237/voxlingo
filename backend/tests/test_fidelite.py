@@ -49,7 +49,7 @@ def test_caler_amene_la_voix_au_niveau_d_origine(tmp_path):
     from pipeline.align import caler
 
     brut, cale = tmp_path / "brut.wav", tmp_path / "cale.wav"
-    sf.write(brut, np.concatenate([sinus(0.02, 1.5), np.zeros(TAUX // 2, dtype=np.float32)]), TAUX)
+    sf.write(brut, np.concatenate([sinus(0.05, 1.5), np.zeros(TAUX // 2, dtype=np.float32)]), TAUX)
     seg = {"id": 1, "debut": 0.0, "fin": 2.0}
     resultat = caler(brut, cale, seg, gain_db=0.0, egaliseur=None, niveau_cible_db=-18.0)
     assert niveau.niveau_fichier_db(cale) == pytest.approx(-18.0, abs=0.3)  # au décibel près
@@ -113,6 +113,22 @@ def test_echantillon_evite_les_chevauchements():
     assert choisis == [{"debut": 20.0, "fin": 25.0}, {"debut": 30.0, "fin": 34.0}]
     # Sans autre choix, la phrase qui chevauche reste utilisable
     assert choisir_extraits([{"debut": 0.0, "fin": 9.0}], autre) == [{"debut": 0.0, "fin": 9.0}]
+
+
+@ffmpeg
+def test_echantillon_garde_les_extraits_tels_quels(tmp_path):
+    """Un passage faible n'est pas remonté au niveau d'un passage fort (ce qui gonflait son bruit et
+    déformait le timbre cloné), et rien n'est écrêté."""
+    from pipeline.voice import extraire_reference
+
+    source = tmp_path / "voix.wav"
+    sf.write(source, np.concatenate([sinus(0.6, 4.0), sinus(0.03, 4.0)]), TAUX)
+    sortie = extraire_reference(source, [{"debut": 0.0, "fin": 4.0}, {"debut": 4.0, "fin": 8.0}], tmp_path / "ref.wav")
+    signal, _ = sf.read(sortie, dtype="float32")
+    fort = niveau.niveau_actif_db(signal[TAUX: 3 * TAUX], TAUX)
+    faible = niveau.niveau_actif_db(signal[int(5.25 * TAUX): int(7.25 * TAUX)], TAUX)
+    assert fort - faible == pytest.approx(20 * np.log10(0.6 / 0.03), abs=0.5)  # écart d'origine conservé
+    assert float(np.max(np.abs(signal))) <= 0.951
 
 
 # ── Traduction ────────────────────────────────────────────────────────────

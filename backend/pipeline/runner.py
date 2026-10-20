@@ -421,7 +421,7 @@ def _timbre_du_locuteur(infos: dict) -> dict:
 def voix_des_locuteurs(job_id: str, data: dict) -> dict[str, str]:
     """Voix de chaque locuteur : sa voix d'origine clonée, ou celle choisie dans la bibliothèque."""
     from pipeline import voice_bank
-    from pipeline.voice import extraire_reference
+    from pipeline.voice import extraire_reference, fichier_reference
 
     status = jobs.read_status(job_id)
     folder = jobs.project_dir(job_id)
@@ -446,7 +446,7 @@ def voix_des_locuteurs(job_id: str, data: dict) -> dict[str, str]:
             prises.add(choix["id"])
             resultat[code] = voice_bank.spec(choix)
         else:
-            reference = dossier / f"reference_{code}.wav"
+            reference = fichier_reference(dossier, code)
             if not reference.is_file():
                 autres = [s for s in data["segments"] if jobs.locuteur(s) != code]
                 extraire_reference(source, phrases, reference, autres)
@@ -526,17 +526,25 @@ def _do_export(job_id: str, report: Callable[[float], None]) -> None:
     duree = status.get("duree_s") or data.get("duree_s")
     marquer_fin_max(data["segments"], duree)
 
-    # Fidélité à la voix d'origine : timbre (égalisation par locuteur cloné) et volume au décibel près
+    # Fidélité à la voix d'origine : volume au décibel près ; égalisation du timbre seulement sur demande
+    # (EGALISATION_TIMBRE=true) : le clonage reproduit déjà le timbre de l'échantillon, et corriger encore
+    # vers la piste « voix isolée » (réverbération, résidus de musique, aigus atténués par la séparation)
+    # recolorait les voix au point de ne plus ressembler aux locuteurs d'origine.
+    from config import get_settings
     from pipeline.niveau import lire_extrait, niveau_actif_db
     from pipeline.timbre_eq import correction_locuteur, filtre_ffmpeg
+    from pipeline.voice import fichier_reference
 
     voix_isolee = folder / "voix_isolee.wav"
     egaliseurs: dict[str, str | None] = {}
-    if voix_isolee.is_file():
-        for code in jobs.locuteurs(data):
-            if not (dossier / f"reference_{code}.wav").is_file():
-                continue  # voix de la bibliothèque : son timbre est choisi, pas recopié
+    if voix_isolee.is_file() and get_settings().egalisation_timbre:
+        for code, infos in jobs.locuteurs(data).items():
             phrases = [s for s in data["segments"] if jobs.locuteur(s) == code]
+            clone = (infos.get("voix_generee", infos.get("voix")) == "clone"
+                     and sum(s["fin"] - s["debut"] for s in phrases) >= REFERENCE_MIN_LOCUTEUR_S
+                     and fichier_reference(dossier, code).is_file())
+            if not clone:
+                continue  # voix de la bibliothèque : son timbre est choisi, pas recopié
             gains = correction_locuteur(voix_isolee, phrases, [fichier_brut(dossier, s["id"]) for s in phrases])
             egaliseurs[code] = filtre_ffmpeg(gains)
             if gains is not None:

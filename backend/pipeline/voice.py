@@ -53,7 +53,16 @@ class VoiceError(RuntimeError):
 # ───────────────────────── Échantillon de référence ─────────────────────────
 
 MARGE_CHEVAUCHEMENT_S = 0.2  # un extrait qui touche la parole d'un autre locuteur n'est pas « propre »
-NIVEAU_REFERENCE_DB = -20.0  # niveau commun des extraits de l'échantillon (voix ni trop faible, ni saturée)
+NIVEAU_REFERENCE_DB = -20.0  # niveau visé pour l'échantillon entier (voix ni trop faible, ni saturée)
+GAIN_REFERENCE_MAX_DB = 12.0  # au-delà, on remonterait surtout le bruit de fond et la musique résiduelle
+CRETE_REFERENCE = 0.95
+
+
+def fichier_reference(dossier: Path, code: str) -> Path:
+    """Échantillon de clonage d'un locuteur. « v2 » : les échantillons faits par l'ancienne méthode
+    (extraits renormalisés un à un puis écrêtés, ce qui déformait le timbre cloné) sont refaits, et
+    les voix clonées avec eux régénérées (le chemin fait partie de la voix, voir Manifeste)."""
+    return dossier / f"reference_v2_{code}.wav"
 
 
 def choisir_extraits(segments: list[dict[str, Any]], autres: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
@@ -82,7 +91,12 @@ def choisir_extraits(segments: list[dict[str, Any]], autres: list[dict[str, Any]
 
 def extraire_reference(video: Path, segments: list[dict[str, Any]], sortie: Path,
                        autres: list[dict[str, Any]] | None = None) -> Path:
-    """Assemble 6 à 15 s de voix d'origine du locuteur en un échantillon propre, au niveau homogène."""
+    """Assemble 6 à 15 s de voix d'origine du locuteur en un échantillon propre.
+
+    Les extraits sont gardés tels quels, les uns par rapport aux autres : le moteur de clonage
+    reproduit le timbre de ce qu'il entend, et renormaliser chaque extrait (ou l'écrêter) remonte le
+    bruit des passages faibles et déforme la voix. Seul un gain global, borné, et sans jamais écrêter,
+    amène l'échantillon entier à un niveau confortable."""
     import soundfile as sf
 
     from pipeline.niveau import niveau_actif_db
@@ -100,15 +114,19 @@ def extraire_reference(video: Path, segments: list[dict[str, Any]], sortie: Path
             capture_output=True,
         )
         if resultat.returncode == 0 and resultat.stdout:
-            extrait = np.frombuffer(resultat.stdout, dtype=np.int16).astype(np.float32) / 32768
-            niveau = niveau_actif_db(extrait, TAUX)
-            if niveau is not None:  # chaque extrait au même niveau : une empreinte vocale cohérente
-                extrait = extrait * 10 ** ((NIVEAU_REFERENCE_DB - niveau) / 20)
-            morceaux.append(np.clip(extrait, -0.98, 0.98))
+            morceaux.append(np.frombuffer(resultat.stdout, dtype=np.int16).astype(np.float32) / 32768)
             morceaux.append(np.zeros(int(0.25 * TAUX), dtype=np.float32))  # courte pause entre extraits
     if not morceaux:
         raise VoiceError("Impossible d'extraire l'échantillon de voix d'origine.")
-    sf.write(sortie, np.concatenate(morceaux), TAUX, subtype="PCM_16")
+    echantillon = np.concatenate(morceaux)
+    niveau = niveau_actif_db(echantillon, TAUX)
+    if niveau is not None:
+        gain = float(np.clip(NIVEAU_REFERENCE_DB - niveau, -GAIN_REFERENCE_MAX_DB, GAIN_REFERENCE_MAX_DB))
+        echantillon = echantillon * 10 ** (gain / 20)
+    crete = float(np.max(np.abs(echantillon)))
+    if crete > CRETE_REFERENCE:  # plutôt baisser le tout qu'écrêter
+        echantillon = echantillon * (CRETE_REFERENCE / crete)
+    sf.write(sortie, echantillon, TAUX, subtype="PCM_16")
     logger.info("Échantillon de référence : %.1f s (%d extraits)",
                 sum(s["fin"] - s["debut"] for s in choisis), len(choisis))
     return sortie
