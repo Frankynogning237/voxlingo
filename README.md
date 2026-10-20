@@ -117,10 +117,17 @@ L'écran **Résultat** propose le comparateur avant/après, le téléchargement 
   égalisation supplémentaire vers la piste voix isolée existe (±3 dB, `pipeline/timbre_eq.py`) mais elle est
   **désactivée** par défaut (`EGALISATION_TIMBRE=true` dans `.env` pour l'essayer) : la piste isolée garde la
   réverbération et perd des aigus à la séparation, et la corriger dans ce sens éloignait les voix des originales ;
-- **échantillon de clonage** : les phrases où un autre locuteur parle en même temps sont écartées ; les extraits
-  sont gardés tels quels (un seul gain global, jamais d'écrêtage) pour que l'empreinte vocale reste fidèle.
-  Les échantillons faits par la version précédente (extraits renormalisés un à un) sont refaits automatiquement,
-  et les voix clonées régénérées, au prochain « Valider et générer les voix ».
+- **échantillon de clonage** (≈ 12 s par locuteur) : chaque phrase candidate reçoit une empreinte vocale
+  (SpeechBrain ECAPA, le modèle de l'identification des locuteurs), comparée à la voix type du locuteur ; les
+  extraits qui ne lui ressemblent pas (phrase attribuée à tort, voix superposée, musique, cri saturé) sont
+  écartés, et le plus représentatif passe en tête (Chatterbox n'écoute que le début de l'échantillon). Les
+  phrases où un autre locuteur parle ne servent que faute de mieux ; les extraits sont gardés tels quels (un
+  seul gain global, jamais d'écrêtage) — `pipeline/ressemblance.py` ;
+- **vérification de chaque voix clonée** : après la synthèse, la ressemblance de chaque phrase avec
+  l'échantillon est mesurée. Une phrase nettement moins ressemblante que les autres du même locuteur (timbre
+  qui a dérivé) est refaite une fois en mode stable (diction plus sage, sans l'intonation importée), et la
+  meilleure des deux versions est gardée (au plus 30 % des phrases d'un locuteur). La mesure est enregistrée
+  dans chaque phrase (`ressemblance`, de 0 à 1).
 
 **Traduction** : le traducteur connaît le genre de chaque locuteur quand sa hauteur de voix est nette (accords
 corrects : « je suis prête »), puis une **relecture du dialogue entier** corrige les incohérences (noms,

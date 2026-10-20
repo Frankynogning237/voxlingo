@@ -45,7 +45,8 @@ if sys.platform == "win32":
 
 TAUX = 24000  # fréquence de sortie de XTTS v2
 REFERENCE_MIN_S = 6.0
-REFERENCE_MAX_S = 15.0
+REFERENCE_CIBLE_S = 12.0  # durée visée : XTTS affine son empreinte jusqu'à ~30 s, Chatterbox lit le début
+REFERENCE_MAX_S = 18.0
 SEUIL_SILENCE = 0.01  # amplitude sous laquelle le début et la fin sont considérés silencieux
 
 
@@ -62,38 +63,58 @@ CRETE_REFERENCE = 0.95
 
 
 def fichier_reference(dossier: Path, code: str) -> Path:
-    """Échantillon de clonage d'un locuteur. « v2 » : les échantillons faits par l'ancienne méthode
-    (extraits renormalisés un à un puis écrêtés, ce qui déformait le timbre cloné) sont refaits, et
-    les voix clonées avec eux régénérées (le chemin fait partie de la voix, voir Manifeste)."""
-    return dossier / f"reference_v2_{code}.wav"
+    """Échantillon de clonage d'un locuteur. Le numéro de version change quand la composition de
+    l'échantillon s'améliore : les anciens échantillons sont refaits, et les voix clonées avec eux
+    régénérées (le chemin fait partie de la voix, voir Manifeste).
+    v2 : extraits gardés tels quels (plus de renormalisation un à un ni d'écrêtage) ;
+    v3 : extraits choisis d'après leur ressemblance vocale avec le locuteur, le plus représentatif en tête."""
+    return dossier / f"reference_v3_{code}.wav"
 
 
-def choisir_extraits(segments: list[dict[str, Any]], autres: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
-    """Phrases du locuteur qui composeront l'échantillon de clonage (6 à 15 s, dans l'ordre du film).
+def choisir_extraits(segments: list[dict[str, Any]], autres: list[dict[str, Any]] | None = None,
+                     scores: dict[int, float] | None = None) -> list[dict[str, Any]]:
+    """Phrases du locuteur qui composeront l'échantillon de clonage (≈ 12 s), la meilleure en tête.
 
     On privilégie les phrases de 1,5 à 12 s où **personne d'autre ne parle** (`autres` : phrases des
     autres locuteurs) : une voix superposée brouillerait l'empreinte et donc le timbre cloné. À défaut,
-    les phrases qui chevauchent sont acceptées, puis toutes les phrases."""
+    les phrases qui chevauchent sont acceptées, puis toutes les phrases.
+
+    Avec `scores` (ressemblance de chaque phrase avec la voix type du locuteur, pipeline/ressemblance.py),
+    les phrases qui ne lui ressemblent pas sont écartées et les plus ressemblantes passent en tête :
+    Chatterbox n'écoute que les premières secondes de l'échantillon."""
+    from pipeline.ressemblance import seuil_echantillon
+
     def propre(seg: dict[str, Any]) -> bool:
         return not any(a["debut"] < seg["fin"] + MARGE_CHEVAUCHEMENT_S and a["fin"] > seg["debut"] - MARGE_CHEVAUCHEMENT_S
                        for a in autres or [])
 
     longueur = lambda s: s["fin"] - s["debut"]  # noqa: E731
+    scores = scores or {}
     bonnes = [s for s in segments if 1.5 <= longueur(s) <= 12]
-    candidats = (sorted((s for s in bonnes if propre(s)), key=longueur, reverse=True)
-                 + sorted((s for s in bonnes if not propre(s)), key=longueur, reverse=True)
-                 ) or sorted(segments, key=longueur, reverse=True)
+    if scores:
+        seuil = seuil_echantillon(scores)
+        fiables = [s for s in bonnes if scores.get(s.get("id"), seuil) >= seuil]  # sans score : gardée
+        if sum(longueur(s) for s in fiables) >= REFERENCE_MIN_S:
+            bonnes = fiables
+    preference = lambda s: (scores.get(s.get("id"), 0.0), longueur(s))  # noqa: E731
+    groupes = [sorted((s for s in bonnes if propre(s)), key=preference, reverse=True),
+               sorted((s for s in bonnes if not propre(s)), key=preference, reverse=True)]
+    if not any(groupes):
+        groupes = [sorted(segments, key=longueur, reverse=True)]
     choisis, total = [], 0.0
-    for seg in candidats:
-        if total >= REFERENCE_MIN_S + 2 or total + longueur(seg) > REFERENCE_MAX_S:
-            continue
-        choisis.append(seg)
-        total += longueur(seg)
-    return sorted(choisis, key=lambda s: s["debut"])
+    for groupe in groupes:
+        if choisis and total >= REFERENCE_MIN_S:
+            break  # assez de phrases propres : celles où un autre parle ne servent pas
+        for seg in groupe:
+            if total >= REFERENCE_CIBLE_S or total + longueur(seg) > REFERENCE_MAX_S:
+                continue
+            choisis.append(seg)
+            total += longueur(seg)
+    return choisis
 
 
 def extraire_reference(video: Path, segments: list[dict[str, Any]], sortie: Path,
-                       autres: list[dict[str, Any]] | None = None) -> Path:
+                       autres: list[dict[str, Any]] | None = None, scores: dict[int, float] | None = None) -> Path:
     """Assemble 6 à 15 s de voix d'origine du locuteur en un échantillon propre.
 
     Les extraits sont gardés tels quels, les uns par rapport aux autres : le moteur de clonage
@@ -104,7 +125,7 @@ def extraire_reference(video: Path, segments: list[dict[str, Any]], sortie: Path
 
     from pipeline.niveau import niveau_actif_db
 
-    choisis = choisir_extraits(segments, autres)
+    choisis = choisir_extraits(segments, autres, scores)
     if not choisis:
         raise VoiceError("Aucune parole exploitable pour cloner la voix.")
 
@@ -135,6 +156,9 @@ def extraire_reference(video: Path, segments: list[dict[str, Any]], sortie: Path
     return sortie
 
 
+TEMPERATURE_STABLE = 0.55  # phrases « stabilisées » (pipeline/ressemblance.py)
+
+
 def temperature(seg: dict[str, Any]) -> float:
     """Expressivité de XTTS : selon le ton de la phrase, renforcée par une émotion forte."""
     base = TEMPERATURE.get(seg.get("ton") or "neutre", 0.7)
@@ -143,7 +167,15 @@ def temperature(seg: dict[str, Any]) -> float:
         base += 0.1
     elif emotion.get("emotion") == "tristesse":
         base -= 0.05
+    if seg.get("stabiliser"):  # phrase refaite car son timbre avait dérivé : diction plus sage, voix plus sûre
+        base = min(base, TEMPERATURE_STABLE)
     return round(min(0.9, max(0.5, base)), 2)
+
+
+def intonation(seg: dict[str, Any]) -> str | None:
+    """Extrait d'origine qui guide l'intonation, sauf pour une phrase stabilisée : son style de diction
+    importé pouvait justement tirer le timbre ailleurs."""
+    return None if seg.get("stabiliser") else seg.get("intonation")
 
 
 INTONATION_MIN_S, INTONATION_MAX_S = 1.2, 15.0  # extrait de phrase exploitable pour l'intonation
@@ -185,7 +217,7 @@ class Manifeste:
             json.loads(self.chemin.read_text(encoding="utf-8")) if self.chemin.is_file() else {}
         )
 
-    CHAMPS = ("texte", "langue", "disponible", "voix", "ton", "intonation")
+    CHAMPS = ("texte", "langue", "disponible", "voix", "ton", "intonation", "stable")
 
     @staticmethod
     def _cle(seg: dict[str, Any], langue: str, voix: str) -> dict[str, Any]:
@@ -193,7 +225,8 @@ class Manifeste:
         # si l'un des deux change, la phrase est refaite
         disponible = round(seg.get("fin_max", seg["fin"]) - seg["debut"], 2)
         return {"texte": seg["traduction"], "langue": langue, "disponible": disponible, "voix": voix,
-                "ton": seg.get("ton"), "intonation": True if seg.get("intonation") else None}
+                "ton": seg.get("ton"), "intonation": True if intonation(seg) else None,
+                "stable": True if seg.get("stabiliser") else None}
 
     def a_jour(self, seg: dict[str, Any], langue: str, voix: str, fichier: Path) -> bool:
         entree = self.donnees.get(str(seg["id"]), {})
@@ -335,7 +368,7 @@ def generer_voix(
                 "disponible": max(s.get("fin_max", s["fin"]) - s["debut"], 0.1),
                 "voix": voix[s["id"]],
                 "temperature": temperature(s),
-                "intonation": s.get("intonation"),
+                "intonation": intonation(s),
             }
             for s in a_generer
         ],

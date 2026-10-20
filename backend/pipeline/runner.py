@@ -420,6 +420,8 @@ def _timbre_du_locuteur(infos: dict) -> dict:
 
 def voix_des_locuteurs(job_id: str, data: dict) -> dict[str, str]:
     """Voix de chaque locuteur : sa voix d'origine clonée, ou celle choisie dans la bibliothèque."""
+    from contextlib import ExitStack
+
     from pipeline import voice_bank
     from pipeline.voice import extraire_reference, fichier_reference
 
@@ -433,34 +435,127 @@ def voix_des_locuteurs(job_id: str, data: dict) -> dict[str, str]:
     locuteurs = jobs.locuteurs(data)
     resultat: dict[str, str] = {}
     prises = {infos["voix"] for infos in locuteurs.values() if infos["voix"] != "clone"}
-    for code, infos in locuteurs.items():
-        choix = voice_bank.trouver(infos["voix"]) if infos["voix"] != "clone" else None
-        phrases = [s for s in data["segments"] if jobs.locuteur(s) == code]
-        if choix is None and sum(s["fin"] - s["debut"] for s in phrases) < REFERENCE_MIN_LOCUTEUR_S:
-            # Trop peu de parole pour cloner sa voix : une voix de la bibliothèque, différente de celles
-            # des autres locuteurs et proche de sa hauteur de voix (et non une voix commune à tous)
-            choix = voice_bank.trouver(voice_bank.attribuer({code: infos}, exclues=prises)[code])
+    # Modèle d'empreinte vocale chargé seulement si un échantillon est à composer, puis libéré
+    modele: dict[str, object] = {}
+    with ExitStack() as pile:
+        for code, infos in locuteurs.items():
+            choix = voice_bank.trouver(infos["voix"]) if infos["voix"] != "clone" else None
+            phrases = [s for s in data["segments"] if jobs.locuteur(s) == code]
+            if choix is None and sum(s["fin"] - s["debut"] for s in phrases) < REFERENCE_MIN_LOCUTEUR_S:
+                # Trop peu de parole pour cloner sa voix : une voix de la bibliothèque, différente de celles
+                # des autres locuteurs et proche de sa hauteur de voix (et non une voix commune à tous)
+                choix = voice_bank.trouver(voice_bank.attribuer({code: infos}, exclues=prises)[code])
+                if choix is not None:
+                    logger.info("[%s] %s parle trop peu pour être cloné : voix %s", job_id, code, choix["nom"])
             if choix is not None:
-                logger.info("[%s] %s parle trop peu pour être cloné : voix %s", job_id, code, choix["nom"])
-        if choix is not None:
-            prises.add(choix["id"])
-            resultat[code] = voice_bank.spec(choix)
-        else:
-            reference = fichier_reference(dossier, code)
-            if not reference.is_file():
-                autres = [s for s in data["segments"] if jobs.locuteur(s) != code]
-                extraire_reference(source, phrases, reference, autres)
-            resultat[code] = f"ref:{reference}"
-        # Réglages de timbre du locuteur (page Locuteurs), appliqués après la synthèse
-        timbre = voice_bank.nettoyer_timbre(infos.get("timbre"))
-        if timbre:
-            resultat[code] = "|".join([resultat[code], *(f"{k}={v}" for k, v in sorted(timbre.items()))])
+                prises.add(choix["id"])
+                resultat[code] = voice_bank.spec(choix)
+            else:
+                reference = fichier_reference(dossier, code)
+                if not reference.is_file():
+                    autres = [s for s in data["segments"] if jobs.locuteur(s) != code]
+                    extraire_reference(source, phrases, reference, autres,
+                                       _scores_echantillon(job_id, code, source, phrases, pile, modele))
+                resultat[code] = f"ref:{reference}"
+            # Réglages de timbre du locuteur (page Locuteurs), appliqués après la synthèse
+            timbre = voice_bank.nettoyer_timbre(infos.get("timbre"))
+            if timbre:
+                resultat[code] = "|".join([resultat[code], *(f"{k}={v}" for k, v in sorted(timbre.items()))])
     return resultat
+
+
+def _scores_echantillon(job_id: str, code: str, source, phrases: list[dict], pile, modele: dict) -> dict[int, float]:
+    """Ressemblance de chaque phrase candidate avec la voix type du locuteur (pipeline/ressemblance.py)."""
+    from pipeline.ressemblance import modele_empreinte, scores_candidats, seuil_echantillon
+
+    if "empreinte" not in modele:
+        modele["empreinte"] = pile.enter_context(modele_empreinte())
+    if modele["empreinte"] is None:
+        return {}
+    scores = scores_candidats(source, phrases, modele["empreinte"])
+    if scores:
+        ecartees = sum(1 for v in scores.values() if v < seuil_echantillon(scores))
+        logger.info("[%s] Échantillon de %s : %d phrase(s) évaluée(s), %d écartée(s) (voix différente)",
+                    job_id, code, len(scores), ecartees)
+    return scores
+
+
+def _verifier_ressemblance(job_id: str, segments: list[dict], par_locuteur: dict[str, str], voix: dict[int, str],
+                           langue: str, dossier, report: Callable[[float], None]) -> dict[int, float]:
+    """Mesure la ressemblance de chaque phrase clonée avec l'échantillon du locuteur ; celles dont le timbre
+    a dérivé sont refaites une fois en mode stable, et la meilleure des deux versions est gardée.
+
+    Renvoie la ressemblance de chaque phrase mesurée. Les phrases refaites reçoivent « stabiliser »."""
+    from pathlib import Path
+
+    import numpy as np
+
+    from pipeline.ressemblance import _lire, modele_empreinte, phrases_a_refaire, ressemblance_fichier
+    from pipeline.voice import VoiceError, fichier_brut, generer_voix
+
+    # Voix réellement clonées, sans transformation volontaire (âge, timbre réglé à la main)
+    clones = {code: Path(spec[4:]) for code, spec in par_locuteur.items() if spec.startswith("ref:") and "|" not in spec}
+    if not clones:
+        return {}
+    ressemblances: dict[int, float] = {}
+    references: dict[str, object] = {}
+    reprises: list[dict] = []
+    with modele_empreinte() as empreinte:
+        if empreinte is None:
+            return {}
+        for code, chemin in clones.items():
+            reference = empreinte(_lire(chemin)) if chemin.is_file() else None
+            if reference is None:
+                continue
+            references[code] = reference
+            phrases = [s for s in segments if jobs.locuteur(s) == code]
+            scores = {}
+            for seg in phrases:
+                r = ressemblance_fichier(fichier_brut(dossier, seg["id"]), reference, empreinte)
+                if r is not None:
+                    scores[seg["id"]] = r
+            ressemblances.update(scores)
+            refaire = phrases_a_refaire(scores)
+            reprises += [s for s in phrases if s["id"] in refaire and not s.get("stabiliser")]  # une seule reprise
+            if scores:
+                logger.info("[%s] Ressemblance de %s : médiane %.2f, %d phrase(s) à refaire", job_id, code,
+                            float(np.median(list(scores.values()))), len(refaire))
+    report(0.2)
+    if not reprises:
+        return ressemblances
+
+    avant = {s["id"]: dossier / f"avant_{s['id']:05d}.wav" for s in reprises}
+    for s in reprises:
+        fichier_brut(dossier, s["id"]).replace(avant[s["id"]])
+        s["stabiliser"] = True
+    try:
+        try:
+            generer_voix(reprises, langue, voix, dossier, on_progress=_sous_progression(report, 0.2, 0.9))
+        except VoiceError as exc:
+            logger.warning("[%s] Reprise des phrases au timbre dérivé impossible (%s) : versions d'origine gardées",
+                           job_id, exc)
+            return ressemblances
+        with modele_empreinte() as empreinte:
+            for s in reprises:
+                nouvelle = None
+                if empreinte is not None:
+                    nouvelle = ressemblance_fichier(fichier_brut(dossier, s["id"]), references[jobs.locuteur(s)],
+                                                    empreinte)
+                if nouvelle is not None and nouvelle >= ressemblances[s["id"]]:
+                    ressemblances[s["id"]] = nouvelle
+                    avant[s["id"]].unlink()
+        gardees = sum(1 for f in avant.values() if not f.is_file())
+        logger.info("[%s] %d phrase(s) refaite(s), %d plus ressemblante(s) gardée(s)", job_id, len(reprises), gardees)
+    finally:
+        for ident, fichier in avant.items():  # version d'origine meilleure (ou reprise interrompue) : remise
+            if fichier.is_file():
+                fichier.replace(fichier_brut(dossier, ident))
+    return ressemblances
 
 
 def _do_voices(job_id: str, report: Callable[[float], None]) -> None:
     """Génère chaque phrase traduite avec la voix de son locuteur (seules les phrases modifiées sont refaites)."""
-    from pipeline.voice import generer_voix
+    from pipeline.voice import Manifeste, generer_voix
 
     status = jobs.read_status(job_id)
     data = jobs.read_segments(job_id)
@@ -471,14 +566,27 @@ def _do_voices(job_id: str, report: Callable[[float], None]) -> None:
     if (status.get("options") or {}).get("intonation_originale", True):
         _ajouter_intonation(job_id, status, data, par_locuteur)
     report(0.02)
-    generees = generer_voix(
-        data["segments"], status["langue_cible"],
-        {s["id"]: par_locuteur[jobs.locuteur(s)] for s in data["segments"]},
-        jobs.project_dir(job_id) / "voix",
-        on_progress=_sous_progression(report, 0.02, 1.0),
-    )
+    voix = {s["id"]: par_locuteur[jobs.locuteur(s)] for s in data["segments"]}
+    dossier = jobs.project_dir(job_id) / "voix"
+    deja = Manifeste(dossier).donnees
+    for seg in data["segments"]:  # texte corrigé depuis : la phrase repart en mode normal (expressif)
+        if seg.get("stabiliser") and deja.get(str(seg["id"]), {}).get("texte") != seg["traduction"]:
+            seg.pop("stabiliser")
+    generees = generer_voix(data["segments"], status["langue_cible"], voix, dossier,
+                            on_progress=_sous_progression(report, 0.02, 0.85))
+    # Chaque voix clonée doit ressembler à son locuteur : les phrases au timbre dérivé sont refaites
+    ressemblances = _verifier_ressemblance(job_id, data["segments"], par_locuteur, voix, status["langue_cible"],
+                                           dossier, _sous_progression(report, 0.85, 1.0))
+    stabilisees = {s["id"] for s in data["segments"] if s.get("stabiliser")}
     # Voix réellement utilisée pour chaque locuteur : l'interface signale un changement non généré
     data = jobs.read_segments(job_id)
+    for seg in data["segments"]:
+        if seg["id"] in ressemblances:
+            seg["ressemblance"] = ressemblances[seg["id"]]
+        if seg["id"] in stabilisees:
+            seg["stabiliser"] = True  # gardé : la phrase reste « à jour » pour le cache des voix
+        else:
+            seg.pop("stabiliser", None)
     fiche = jobs.locuteurs(data)
     for infos in fiche.values():
         infos["voix_generee"] = infos["voix"]
