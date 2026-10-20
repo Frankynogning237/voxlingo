@@ -16,6 +16,7 @@ import os
 import subprocess
 import sys
 import threading
+from collections import deque
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -374,7 +375,15 @@ def _lancer_xtts(commande: list[str], moteur: str, tache: Path, a_generer: list[
         stderr=subprocess.PIPE,
         text=True,
         encoding="utf-8",
+        errors="replace",
+        env={**os.environ, "TQDM_DISABLE": "1"},  # pas de barres de progression du moteur à chaque phrase
     )
+    # La sortie d'erreur est lue au fil de l'eau : sinon, une fois son tampon plein (≈ 64 Ko de messages
+    # du moteur), le processus de synthèse se bloque en écrivant et la génération ne progresse plus.
+    # Seules les dernières lignes sont gardées (mémoire bornée), pour le message d'erreur.
+    erreurs_recentes: deque[str] = deque(maxlen=200)
+    lecteur = threading.Thread(target=lambda: erreurs_recentes.extend(processus.stderr), daemon=True)
+    lecteur.start()
     faits = 0
     try:
         for ligne in processus.stdout:
@@ -399,7 +408,8 @@ def _lancer_xtts(commande: list[str], moteur: str, tache: Path, a_generer: list[
         tache.unlink(missing_ok=True)
 
     if processus.returncode != 0:
-        erreurs = processus.stderr.read().strip()
+        lecteur.join(timeout=10)
+        erreurs = "".join(erreurs_recentes).strip()
         logger.error("Processus %s terminé avec le code %s : %s", nom, processus.returncode, erreurs[-1500:])
         message = next((l[7:] for l in reversed(erreurs.splitlines()) if l.startswith("ERREUR ")), None)
         if message is None or "memory" in message.lower() or "alloc" in message.lower():
