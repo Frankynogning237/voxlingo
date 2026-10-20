@@ -18,6 +18,6 @@ audio-separator>=0.40  # séparation voix/fond RoFormer, plus propre que Demucs 
 speechbrain>=1.0
 pyannote.audio>=4.0  # identification des locuteurs (jeton Hugging Face)
 mediapipe>=0.10  # lecture des scènes : visages et lèvres
-onnxruntime>=1.18  # empreinte des visages (ArcFace)
+onnxruntime>=1.18  # empreinte des visages (ArcFace), détecteur de texte de l'habillage (PP-OCR)
 funasr>=1.1  # émotions de la voix (emotion2vec+), facultatif
 pytest>=8

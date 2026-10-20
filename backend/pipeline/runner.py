@@ -702,6 +702,7 @@ def _do_export(job_id: str, report: Callable[[float], None]) -> None:
 
 def run_voices(job_id: str) -> None:
     """Génère les voix puis exporte la vidéo doublée (après « Valider et générer les voix »)."""
+    invalider_habillage(job_id)  # la vidéo de base va changer
     jobs.update_status(
         job_id,
         progression=WEIGHTS["extraction"] + WEIGHTS["transcription"] + WEIGHTS["traduction"],
@@ -720,6 +721,14 @@ def run_voices(job_id: str) -> None:
             _synchro_labiale(job_id)
 
     _guarded(job_id, body, etat_final="termine")
+    _habiller_si_termine(job_id)
+
+
+def _habiller_si_termine(job_id: str) -> None:
+    """Après un export réussi : habillage avec les réglages du projet (le projet est déjà « terminé »,
+    l'écran Résultat s'affiche et suit la progression de l'habillage)."""
+    if (jobs.read_status(job_id) or {}).get("etat") == "termine":
+        habiller_projet(job_id)
 
 
 def _synchro_labiale(job_id: str) -> None:
@@ -762,3 +771,99 @@ def run_lipsync(job_id: str) -> None:
     """Synchronisation labiale demandée après coup depuis l'écran Résultat (moteur sur GPU)."""
     jobs.update_status(job_id, synchro_erreur=None)
     _guarded(job_id, lambda: _synchro_labiale(job_id), etat_final="termine")
+    _habiller_si_termine(job_id)
+
+
+# ---------------------------------------------------------------------------------------------------
+# Habillage (sous-titres incrustés, flou des anciens sous-titres, logo, qualité, métadonnées)
+# ---------------------------------------------------------------------------------------------------
+
+# Chaque demande d'habillage reçoit un numéro : un rendu dont le numéro n'est plus le dernier s'arrête
+# (réglages changés, voix régénérées…), et un seul rendu par projet tourne à la fois.
+_habillage_numero: dict[str, int] = {}
+_habillage_verrous: dict[str, threading.Lock] = {}
+_habillage_garde = threading.Lock()
+
+
+def _nouvelle_demande_habillage(job_id: str) -> tuple[int, threading.Lock]:
+    with _habillage_garde:
+        _habillage_numero[job_id] = _habillage_numero.get(job_id, 0) + 1
+        return _habillage_numero[job_id], _habillage_verrous.setdefault(job_id, threading.Lock())
+
+
+def video_de_base(job_id: str, status: dict):
+    """Vidéo à habiller : la vidéo synchronisée si elle existe, sinon la vidéo doublée."""
+    folder = jobs.project_dir(job_id)
+    if status.get("synchro_importee"):
+        synchro = next(folder.glob("doublage_synchro.*"), None)
+        if synchro is not None:
+            return synchro
+    sortie = folder / (status.get("fichier_sortie") or "")
+    return sortie if status.get("fichier_sortie") and sortie.is_file() else None
+
+
+def _supprimer_habillage(job_id: str) -> None:
+    folder = jobs.project_dir(job_id)
+    for fichier in [*folder.glob("habille.*"), folder / "apercu_habille.mp4"]:
+        fichier.unlink(missing_ok=True)
+
+
+def invalider_habillage(job_id: str) -> None:
+    """La vidéo de base va changer : le rendu en cours s'arrête et l'ancienne vidéo habillée est retirée."""
+    numero, verrou = _nouvelle_demande_habillage(job_id)
+    with verrou:
+        _supprimer_habillage(job_id)
+        jobs.update_status(job_id, habillage=None)
+
+
+def habiller_projet(job_id: str) -> None:
+    """Refait la vidéo habillée avec les réglages du projet (options « habillage »), sans toucher aux voix.
+
+    Un échec n'affecte pas le doublage : il est signalé dans `habillage.erreur`, la vidéo doublée reste
+    téléchargeable telle quelle."""
+    from pipeline.format import apercu_navigateur
+    from pipeline.habillage import actif, habiller, normaliser
+
+    numero, verrou = _nouvelle_demande_habillage(job_id)
+    with verrou:
+        if _habillage_numero.get(job_id) != numero:
+            return  # une demande plus récente passera après
+        status = jobs.read_status(job_id) or {}
+        reglages = (status.get("options") or {}).get("habillage")
+        _supprimer_habillage(job_id)
+        base = video_de_base(job_id, status)
+        if not actif(reglages) or base is None:
+            jobs.update_status(job_id, habillage=None)
+            return
+        folder = jobs.project_dir(job_id)
+        sortie = folder / f"habille{base.suffix.lower()}"
+        jobs.update_status(job_id, habillage={"etat": "en_cours", "progression": 0, "erreur": None})
+        dernier = {"pourcent": 0}
+
+        def progression(fraction: float) -> None:
+            pourcent = int(fraction * 95)  # les 5 % restants : copie pour l'aperçu dans le navigateur
+            if pourcent != dernier["pourcent"]:
+                dernier["pourcent"] = pourcent
+                jobs.update_status(job_id, habillage={"etat": "en_cours", "progression": pourcent, "erreur": None})
+
+        debut = time.perf_counter()
+        try:
+            segments = jobs.read_segments(job_id)["segments"]
+            habiller(base, segments, reglages, sortie, progression,
+                     doit_arreter=lambda: _habillage_numero.get(job_id) != numero)
+            apercu_navigateur(sortie, folder / "apercu_habille.mp4")
+        except InterruptedError:
+            logger.info("[%s] Habillage interrompu par une demande plus récente", job_id)
+            return
+        except Exception as exc:
+            logger.exception("[%s] Habillage", job_id)
+            _supprimer_habillage(job_id)
+            jobs.update_status(job_id, habillage={"etat": "erreur", "progression": 0,
+                                                  "erreur": str(exc) or exc.__class__.__name__})
+            return
+        logger.info("[%s] Habillage terminé en %.1f s", job_id, time.perf_counter() - debut)
+        jobs.update_status(job_id, habillage={
+            "etat": "termine", "progression": 100, "erreur": None, "fichier": sortie.name,
+            "source": base.name, "reglages": normaliser(reglages),
+        })
+    sauvegarde.apres_export(job_id)

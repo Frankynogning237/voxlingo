@@ -341,7 +341,9 @@ export function Project({ id, edition = false }: { id: string; edition?: boolean
   const { data: job, error } = useQuery({
     queryKey: ['job', id],
     queryFn: () => getJob(id),
-    refetchInterval: (query) => (enCours(query.state.data) ? 2000 : false),
+    // Pendant l'habillage, le projet reste « terminé » : on suit quand même sa progression
+    refetchInterval: (query) =>
+      enCours(query.state.data) || query.state.data?.habillage?.etat === 'en_cours' ? 2000 : false,
   })
   const extractionFaite = job?.etapes.find((s) => s.cle === 'extraction')?.etat === 'termine'
   const { data: peaks } = useQuery({

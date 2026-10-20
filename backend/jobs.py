@@ -260,6 +260,13 @@ def start_lipsync(job_id: str) -> None:
     threading.Thread(target=run_lipsync, args=(job_id,), name=f"synchro-{job_id}", daemon=True).start()
 
 
+def start_habillage(job_id: str) -> None:
+    """Refait la vidéo habillée (sous-titres incrustés, flou, logo…) dans un thread en arrière-plan."""
+    from pipeline.runner import habiller_projet
+
+    threading.Thread(target=habiller_projet, args=(job_id,), name=f"habillage-{job_id}", daemon=True).start()
+
+
 def start_speakers(job_id: str) -> None:
     """Lance l'identification des locuteurs dans un thread en arrière-plan."""
     from pipeline.runner import run_speakers

@@ -31,6 +31,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 
 import { LipsIcon, Panel } from '@/components/Controls'
 import { LangueTag } from '@/components/Flag'
+import { Habillage } from '@/components/Habillage'
 import { Gradient, PageHeader, useHealth } from '@/components/Layout'
 import { OutlineButton, PrimaryButton } from '@/components/PrimaryButton'
 import {
@@ -50,6 +51,14 @@ import { cn } from '@/lib/utils'
 import { VOX_EASE, voxTransition } from '@/motion/variants'
 
 type Piste = 'original' | 'double'
+
+/** Version de la vidéo finale (habillée, synchronisée ou doublée) : change à chaque nouveau fichier. */
+function versionFinale(job: Job) {
+  const h = job.habillage?.etat === 'termine' ? JSON.stringify(job.habillage.reglages ?? {}) : ''
+  let somme = 0
+  for (const c of h) somme = (somme * 31 + c.charCodeAt(0)) | 0
+  return `${job.fin_traitement ?? ''}-${job.synchro_importee ? 's' : 'd'}-${h ? somme.toString(36) : 'brut'}`
+}
 
 /** Quelques particules violet → cyan, jouées une seule fois à la première ouverture du résultat. */
 function Celebration({ jobId }: { jobId: string }) {
@@ -222,7 +231,7 @@ function Comparateur({ job, piste, setPiste }: { job: Job; piste: Piste; setPist
       >
         <video
           ref={double}
-          src={dubbedUrl(job.id)}
+          src={dubbedUrl(job.id, versionFinale(job))}
           preload="metadata"
           crossOrigin="anonymous"
           onLoadedMetadata={(e) => setDuree(e.currentTarget.duration)}
@@ -502,8 +511,14 @@ export function Result({ job }: { job: Job }) {
 
           <div className="mt-4 flex flex-col gap-3">
             <PrimaryButton href={downloadUrl(job.id, 'download')} size="lg" className="h-14 rounded-2xl">
-              <Download className="size-5" /> Télécharger la vidéo ({(job.fichier_sortie ?? job.fichier).split(".").pop()?.toUpperCase()})
+              <Download className="size-5" /> Télécharger la vidéo ({(job.fichier_sortie ?? job.fichier).split(".").pop()?.toUpperCase()}
+              {job.habillage?.etat === 'termine' ? ', habillée' : ''})
             </PrimaryButton>
+            {job.habillage?.etat === 'en_cours' && (
+              <p className="text-center text-[13px] text-white/60">
+                Habillage en cours ({job.habillage.progression} %) : la vidéo habillée sera téléchargeable dans un instant.
+              </p>
+            )}
             <a
               href={sousTitres ? downloadUrl(job.id, 'subtitles') : undefined}
               aria-disabled={!sousTitres}
@@ -532,6 +547,7 @@ export function Result({ job }: { job: Job }) {
       </div>
 
       <SynchroLabiale job={job} />
+      <Habillage job={job} />
 
       <motion.div
         initial={{ opacity: 0, y: 8 }}

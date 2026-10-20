@@ -106,6 +106,10 @@ def startup() -> None:
                 status["id"], etat="erreur",
                 erreur="Traitement interrompu par l'arrêt du serveur.",
             )
+        if (status.get("habillage") or {}).get("etat") == "en_cours":
+            jobs.update_status(status["id"], habillage={
+                "etat": "erreur", "progression": 0,
+                "erreur": "Habillage interrompu par l'arrêt du serveur : appliquez-le de nouveau."})
 
 
 @app.on_event("shutdown")
@@ -563,7 +567,8 @@ async def import_lipsync(job_id: str, video: UploadFile = File(...)) -> dict:
     recue.unlink(missing_ok=True)
     apercu_navigateur(cible, dossier / "apercu_synchro.mp4")
     jobs.update_step(job_id, "synchro_labiale", etat="termine")
-    return jobs.update_status(job_id, synchro_importee=True, synchro_moteur=False)
+    status = jobs.update_status(job_id, synchro_importee=True, synchro_moteur=False)
+    return _rehabiller(job_id, status)
 
 
 @app.post("/jobs/{job_id}/synchroniser")
@@ -592,11 +597,18 @@ def remove_lipsync(job_id: str) -> dict:
         fichier.unlink()
     (jobs.project_dir(job_id) / "apercu_synchro.mp4").unlink(missing_ok=True)
     jobs.update_step(job_id, "synchro_labiale", etat="kaggle")
-    return jobs.update_status(job_id, synchro_importee=False, synchro_moteur=False)
+    status = jobs.update_status(job_id, synchro_importee=False, synchro_moteur=False)
+    return _rehabiller(job_id, status)
 
 
 def _video_finale(job_id: str, status: dict) -> Path:
-    """Vidéo synchronisée si elle a été importée, sinon la vidéo doublée (au format d'origine)."""
+    """Vidéo habillée si l'habillage est fait, sinon vidéo synchronisée si elle a été importée, sinon la
+    vidéo doublée (toujours au format d'origine)."""
+    habillage = status.get("habillage") or {}
+    if habillage.get("etat") == "termine" and habillage.get("fichier"):
+        habillee = jobs.project_dir(job_id) / habillage["fichier"]
+        if habillee.is_file():
+            return habillee
     if status.get("synchro_importee"):
         synchro = next(jobs.project_dir(job_id).glob("doublage_synchro.*"), None)
         if synchro is not None:
@@ -608,8 +620,79 @@ def _video_finale(job_id: str, status: dict) -> Path:
 def _apercu_finale(job_id: str, status: dict) -> Path:
     """Version lisible par le navigateur de la vidéo finale (elle-même, ou sa copie MP4)."""
     finale = _video_finale(job_id, status)
-    copie = finale.with_name("apercu_synchro.mp4" if finale.stem == "doublage_synchro" else "apercu.mp4")
+    copie = finale.with_name({"doublage_synchro": "apercu_synchro.mp4", "habille": "apercu_habille.mp4"}
+                             .get(finale.stem, "apercu.mp4"))
     return copie if copie.is_file() else finale
+
+
+class ZoneFlou(BaseModel):
+    x: float = Field(ge=0, le=1)
+    y: float = Field(ge=0, le=1)
+    l: float = Field(gt=0, le=1)
+    h: float = Field(gt=0, le=1)
+
+
+class ReglagesHabillage(BaseModel):
+    """Habillage de la vidéo exportée (voir pipeline/habillage.py)."""
+    sous_titres: bool = False
+    style: Literal["reseaux", "impact", "karaoke", "classique"] = "reseaux"
+    animation: Literal["aucune", "fondu", "pop", "glisse"] = "pop"
+    taille: Literal["petite", "moyenne", "grande"] = "moyenne"
+    position: Literal["bas", "milieu", "haut"] = "bas"
+    couleur: str = Field("#facc15", pattern=r"^#[0-9a-fA-F]{6}$")
+    flou: bool = False
+    zone: ZoneFlou = ZoneFlou(x=0.08, y=0.76, l=0.84, h=0.2)
+    logo: bool = False
+    coin: Literal["haut_droite", "haut_gauche", "bas_droite", "bas_gauche"] = "haut_droite"
+    qualite: bool = False
+    sans_metadonnees: bool = False
+
+
+def _rehabiller(job_id: str, status: dict) -> dict:
+    """La vidéo de base a changé (synchronisation importée ou retirée) : l'habillage est refait."""
+    from pipeline.habillage import actif
+
+    if actif((status.get("options") or {}).get("habillage")):
+        status = jobs.update_status(job_id, habillage={"etat": "en_cours", "progression": 0, "erreur": None})
+        jobs.start_habillage(job_id)
+    return status
+
+
+@app.put("/jobs/{job_id}/habillage")
+def set_dressing(job_id: str, reglages: ReglagesHabillage) -> dict:
+    """Enregistre l'habillage du projet et refait la vidéo exportée avec lui, sans régénérer les voix."""
+    status = _get_status_or_404(job_id)
+    if status["etat"] in ("en_attente", "en_cours"):
+        raise HTTPException(409, "Un traitement est en cours : attendez sa fin pour changer l'habillage.")
+    status = jobs.update_status(job_id, options={**(status.get("options") or {}), "habillage": reglages.model_dump()})
+    if status["etat"] != "termine" or not status.get("fichier_sortie"):
+        return status  # appliqué au prochain export
+    status = jobs.update_status(job_id, habillage={"etat": "en_cours", "progression": 0, "erreur": None})
+    jobs.start_habillage(job_id)
+    return status
+
+
+class DemandeApercuHabillage(BaseModel):
+    reglages: ReglagesHabillage
+    instant: float | None = Field(None, ge=0)
+
+
+@app.post("/jobs/{job_id}/habillage/apercu")
+def dressing_preview(job_id: str, demande: DemandeApercuHabillage) -> Response:
+    """Image JPEG de la vidéo habillée à un instant donné, pour régler l'habillage avant de l'appliquer."""
+    from pipeline.extract import FFmpegError
+    from pipeline.habillage import apercu
+    from pipeline.runner import video_de_base
+
+    status = _get_status_or_404(job_id)
+    dossier = jobs.project_dir(job_id)
+    source = video_de_base(job_id, status) or dossier / status["fichier"]
+    segments = jobs.read_segments(job_id)["segments"] if (dossier / "segments.json").is_file() else []
+    try:
+        image = apercu(source, segments, demande.reglages.model_dump(), dossier, demande.instant)
+    except FFmpegError as exc:
+        raise HTTPException(500, str(exc)) from None
+    return Response(image, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
 
 @app.get("/jobs/{job_id}/subtitles")

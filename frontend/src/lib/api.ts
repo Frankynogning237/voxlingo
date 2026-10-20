@@ -97,6 +97,52 @@ export type JobOptions = {
   debut_s?: number
   fin_s?: number
   decoupe?: { debut_s: number; fin_s: number }
+  /** Habillage de la vidéo exportée (sous-titres incrustés, flou, logo, qualité, métadonnées) */
+  habillage?: Habillage
+}
+
+export type StyleSousTitres = 'reseaux' | 'impact' | 'karaoke' | 'classique'
+export type AnimationSousTitres = 'aucune' | 'fondu' | 'pop' | 'glisse'
+export type CoinLogo = 'haut_droite' | 'haut_gauche' | 'bas_droite' | 'bas_gauche'
+
+export type Habillage = {
+  sous_titres: boolean
+  style: StyleSousTitres
+  animation: AnimationSousTitres
+  taille: 'petite' | 'moyenne' | 'grande'
+  position: 'bas' | 'milieu' | 'haut'
+  couleur: string
+  /** Effacer les anciens sous-titres incrustés dans la zone (fractions de l'image) : lettres reconstruites */
+  flou: boolean
+  zone: { x: number; y: number; l: number; h: number }
+  logo: boolean
+  coin: CoinLogo
+  /** Débruitage et netteté (le format et la taille de la vidéo ne changent pas) */
+  qualite: boolean
+  sans_metadonnees: boolean
+}
+
+export const HABILLAGE_DEFAUT: Habillage = {
+  sous_titres: false,
+  style: 'reseaux',
+  animation: 'pop',
+  taille: 'moyenne',
+  position: 'bas',
+  couleur: '#facc15',
+  flou: false,
+  zone: { x: 0.08, y: 0.76, l: 0.84, h: 0.2 },
+  logo: false,
+  coin: 'haut_droite',
+  qualite: false,
+  sans_metadonnees: false,
+}
+
+/** État du dernier rendu de l'habillage. */
+export type EtatHabillage = {
+  etat: 'en_cours' | 'termine' | 'erreur'
+  progression: number
+  erreur: string | null
+  reglages?: Habillage
 }
 
 export type Job = {
@@ -124,6 +170,7 @@ export type Job = {
   synchro_importee?: boolean
   synchro_moteur?: boolean // synchronisation labiale faite par le moteur (MuseTalk)
   synchro_erreur?: string | null
+  habillage?: EtatHabillage | null
   debut_traitement: string | null
   fin_traitement: string | null
   cree_le: string
@@ -212,7 +259,11 @@ export const getJob = (id: string) => request<Job>(`/jobs/${id}`)
 export const getSegments = (id: string) => request<Transcription>(`/jobs/${id}/segments`)
 export const videoUrl = (id: string) => fichier(`/jobs/${id}/video`)
 export const thumbnailUrl = (id: string) => fichier(`/jobs/${id}/thumbnail`)
-export const dubbedUrl = (id: string) => fichier(`/jobs/${id}/dubbed`)
+/** Vidéo doublée à lire ; `version` change quand le fichier change (le navigateur ne relit pas l'ancien). */
+export const dubbedUrl = (id: string, version?: string) => {
+  const url = fichier(`/jobs/${id}/dubbed`)
+  return version ? `${url}${url.includes('?') ? '&' : '?'}v=${encodeURIComponent(version)}` : url
+}
 export const downloadUrl = (id: string, quoi: 'download' | 'subtitles' | 'audio') => fichier(`/jobs/${id}/${quoi}`)
 export const subtitlesVttUrl = (id: string) => fichier(`/jobs/${id}/subtitles.vtt`)
 export const filmstripUrl = (id: string) => fichier(`/jobs/${id}/filmstrip`)
@@ -479,5 +530,22 @@ export async function importLipsync(id: string, video: File): Promise<Job> {
 export const removeLipsync = (id: string) => send<Job>(`/jobs/${id}/synchro`, 'DELETE')
 /** Synchronisation labiale par le moteur lui-même (GPU Kaggle/Colab, MuseTalk). */
 export const lipsyncEngine = (id: string) => send<Job>(`/jobs/${id}/synchroniser`, 'POST')
+
+// ───────────────────────── Habillage de la vidéo exportée ─────────────────────────
+
+/** Enregistre l'habillage et refait la vidéo exportée avec lui (les voix ne sont pas régénérées). */
+export const setDressing = (id: string, habillage: Habillage) => send<Job>(`/jobs/${id}/habillage`, 'PUT', habillage)
+
+/** Image de la vidéo habillée à un instant (adresse locale d'un JPEG, à libérer avec URL.revokeObjectURL). */
+export async function dressingPreview(id: string, reglages: Habillage, instant: number | null, signal?: AbortSignal): Promise<string> {
+  const res = await fetch(`${API_URL}/jobs/${id}/habillage/apercu`, {
+    method: 'POST',
+    headers: { ...entetes(), 'Content-Type': 'application/json' },
+    body: JSON.stringify({ reglages, instant }),
+    signal,
+  })
+  if (!res.ok) throw new Error((await res.json().catch(() => null))?.detail ?? `Erreur serveur (${res.status})`)
+  return URL.createObjectURL(await res.blob())
+}
 
 export const LIBELLES_AGE: Record<AgeVoix, string> = { enfant: 'Enfant', jeune: 'Jeune', adulte: 'Adulte', senior: 'Senior' }
