@@ -56,7 +56,9 @@ code(r"""
 import glob, os, shutil, subprocess, zipfile, time
 TRAVAIL = '/kaggle/working/essai'
 os.makedirs(TRAVAIL, exist_ok=True)
-paquets = glob.glob('/kaggle/input/**/voxlingo_infinitetalk_*.zip', recursive=True)
+# Paquet importé (Add Input → Upload) ou récupéré depuis la branche « essai-infinitetalk-donnees » du dépôt
+paquets = (glob.glob('/kaggle/input/**/voxlingo_infinitetalk_*.zip', recursive=True)
+           + glob.glob('/kaggle/working/donnees/**/voxlingo_infinitetalk_*.zip', recursive=True))
 if paquets:
     zipfile.ZipFile(paquets[0]).extractall(TRAVAIL)
 else:  # Kaggle décompresse parfois les .zip à l'import
