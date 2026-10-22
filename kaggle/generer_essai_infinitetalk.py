@@ -236,7 +236,7 @@ debut = time.time()
     --infinitetalk_dir {POIDS}/InfiniteTalk/single/infinitetalk.safetensors \
     --quant {quant} --quant_dir {POIDS}/InfiniteTalk/quant_models/{MODELE}.safetensors \
     --input_json {TRAVAIL}/entree.json --size infinitetalk-480 --mode streaming --motion_frame 9 \
-    --num_persistent_param_in_dit 0 {reglages} --save_file {TRAVAIL}/recree_brut 2>&1 | tail -40
+    --num_persistent_param_in_dit 0 {reglages} --save_file {TRAVAIL}/recree_brut 2>&1 | tee /kaggle/working/journal.txt | tail -40
 CALCUL = time.time() - debut
 print(f'Calcul : {CALCUL / 60:.1f} min')
 """)
@@ -253,6 +253,24 @@ if brut:
     !ffmpeg -y -v error -i "{TRAVAIL}/origine.mp4" -i "{brut}" -i "{TRAVAIL}/mixage.wav" -filter_complex "[0:v]scale=-2:480[a];[1:v]scale=-2:480[b];[a][b]hstack=inputs=2[v]" -map "[v]" -map 2:a:0 -c:v libx264 -crf 18 -c:a aac -shortest /kaggle/working/comparaison.mp4
 open('/kaggle/working/rapport.txt', 'w').write('\n'.join(rapport))
 print('\n'.join(rapport))
+# Journal et résultats envoyés sur la branche « essai-infinitetalk-resultats » du dépôt (si GITHUB_TOKEN est
+# attaché au carnet) : on les récupère directement sur le PC, sans passer par Kaggle
+try:
+    from kaggle_secrets import UserSecretsClient
+    jeton = UserSecretsClient().get_secret('GITHUB_TOKEN')
+    envoi = '/kaggle/working/envoi'
+    shutil.rmtree(envoi, ignore_errors=True)
+    os.makedirs(envoi)
+    for nom in ('rapport.txt', 'journal.txt', 'comparaison.mp4', 'recree.mp4'):
+        if os.path.isfile(f'/kaggle/working/{nom}'):
+            shutil.copy(f'/kaggle/working/{nom}', envoi)
+    depot = f'https://x-access-token:{jeton}@github.com/Frankynogning237/voxlingo.git'
+    code = os.system(f'cd {envoi} && git init -q && git add -A && git -c user.name=Kaggle -c user.email=kaggle@voxlingo '
+                     f'commit -q -m "Résultats de l essai InfiniteTalk" && git push -q -f {depot} HEAD:refs/heads/essai-infinitetalk-resultats')
+    del jeton, depot
+    print('Résultats envoyés sur GitHub (branche essai-infinitetalk-resultats)' if code == 0 else 'Envoi sur GitHub impossible')
+except Exception as erreur:
+    print('Envoi sur GitHub impossible :', type(erreur).__name__)
 """)
 
 md("""
