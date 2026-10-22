@@ -71,7 +71,7 @@ for nom in ('origine.mp4', 'voix.wav', 'mixage.wav'):
 import psutil
 print(f"Mémoire vive : {psutil.virtual_memory().total / 1e9:.0f} Go")
 # Dossier des modèles : là où il y a le plus de place (il faut ~35 Go)
-DOSSIERS = [d for d in ('/kaggle/tmp', '/tmp', '/kaggle/working') if os.path.isdir(d)]
+DOSSIERS = [d for d in ('/kaggle/temp', '/kaggle/tmp', '/tmp', '/kaggle/working') if os.path.isdir(d)]
 POIDS = os.path.join(max(DOSSIERS, key=lambda d: shutil.disk_usage(d).free), 'poids_infinitetalk')
 os.makedirs(POIDS, exist_ok=True)
 print('Modèles dans', POIDS, f"({shutil.disk_usage(POIDS).free / 1e9:.0f} Go libres)")
