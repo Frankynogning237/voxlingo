@@ -130,11 +130,40 @@ module('xfuser/core/long_ctx_attention/__init__.py', [
     'class xFuserLongContextAttention:',
     '    def __init__(self, *a, **k): raise NotImplementedError("une seule carte dans cet essai")',
 ])
+# decord (lecture vidéo) n'existe pas pour Python 3.13 : InfiniteTalk n'en lit qu'une image précise de la
+# vidéo d'origine, ce qu'OpenCV fait aussi (images RVB, index négatif = depuis la fin)
+module('decord/__init__.py', [
+    'import cv2',
+    'class _Image:',
+    '    def __init__(self, tableau): self._t = tableau',
+    '    def asnumpy(self): return self._t',
+    'def cpu(*a, **k): return None',
+    'class VideoReader:',
+    '    def __init__(self, chemin, ctx=None, **k):',
+    '        self._chemin = chemin',
+    '        capture = cv2.VideoCapture(chemin)',
+    '        self._num_frame = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))',
+    '        self._fps = capture.get(cv2.CAP_PROP_FPS)',
+    '        capture.release()',
+    '    def __len__(self): return self._num_frame',
+    '    def get_avg_fps(self): return self._fps',
+    '    def __getitem__(self, indice):',
+    '        indice = indice % self._num_frame if indice < 0 else indice',
+    '        capture = cv2.VideoCapture(self._chemin)',
+    '        capture.set(cv2.CAP_PROP_POS_FRAMES, indice)',
+    '        lu, image = capture.read()',
+    '        capture.release()',
+    '        if not lu: raise IndexError(indice)',
+    '        return _Image(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))',
+    'class bridge:',
+    '    @staticmethod',
+    '    def set_bridge(*a, **k): pass',
+])
 cuda = 'cu' + torch.version.cuda.replace('.', '')[:3]
 print('PyTorch', version_torch, cuda)
 with open('/tmp/contraintes.txt', 'w') as f:
     f.write(f'torch=={version_torch}' + chr(10))
-!grep -v -E "^(xfuser|gradio|dashscope)" InfiniteTalk/requirements.txt > /tmp/requirements.txt
+!grep -v -E "^(xfuser|gradio|dashscope|decord)" InfiniteTalk/requirements.txt > /tmp/requirements.txt
 !pip install -q -c /tmp/contraintes.txt -r /tmp/requirements.txt librosa "huggingface_hub[hf_transfer]"
 
 # Adaptations T4 (pas de bfloat16 ni de flash-attention ; deux cartes de 16 Go)
@@ -153,6 +182,8 @@ remplacer('wan/modules/t5.py', 'f"t5_{quant}.safetensors"', '"t5_fp8.safetensors
 remplacer('wan/modules/t5.py', 'f"t5_map_{quant}.json"', '"t5_map_fp8.json"', 1)
 # Synthèse vocale intégrée (kokoro, pour le mode « texte → voix ») : inutile ici, et ses dépendances manquent
 remplacer('generate_infinitetalk.py', 'from kokoro import KPipeline', 'KPipeline = None  # synthèse vocale inutile ici')
+# Python 3.13 (Kaggle) : inspect.ArgSpec n'existe plus (importé sans être utilisé)
+remplacer('wan/multitalk.py', 'from inspect import ArgSpec', '')
 # Encodeurs de texte et d'image sur la deuxième carte : la première reste au modèle principal
 remplacer('wan/multitalk.py', 'self.text_encoder.model.to(self.device)', 'self.text_encoder.model.to("cuda:1")')
 # … dès son chargement et pour toute la séance : la mémoire vive (29 Go) reste au modèle principal (19,5 Go)
