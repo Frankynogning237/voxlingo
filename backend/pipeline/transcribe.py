@@ -3,12 +3,20 @@
 Le modèle est chargé pour la tâche puis déchargé, pour libérer la mémoire
 avant les étapes suivantes. Le minutage de chaque mot est conservé : il sert
 à redécouper précisément les phrases trop longues (pipeline/segments.py).
+
+Pour une transcription fidèle :
+  - la langue est détectée sur plusieurs passages parlés de la vidéo, pas seulement sur ses
+    30 premières secondes (générique, musique, réplique dans une autre langue) ;
+  - les termes du glossaire du projet (noms propres, marques…) sont signalés à Whisper ;
+  - les « hallucinations » de Whisper sont écartées : phrases inventées sur du silence ou de la
+    musique (« Sous-titres réalisés par… », « Merci d'avoir regardé »), boucles de répétition.
 """
 
 from __future__ import annotations
 
 import gc
 import logging
+import re
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -42,6 +50,54 @@ FIN_DE_PHRASE = (".", "!", "?", "…", ":", ";", "。", "！", "？")
 ECART_MAX_S = 0.6  # silence maximal entre deux morceaux d'une même phrase
 DUREE_MAX_S = 15.0  # au-delà, on garde les segments séparés
 
+# Dépôts des modèles : « large-v3-turbo » a changé d'adresse sur Hugging Face (mobiuslabsgmbh →
+# dropbox-dash) et faster-whisper ne suit pas la redirection ; on essaie les dépôts dans l'ordre.
+DEPOTS = {
+    "large-v3-turbo": ["dropbox-dash/faster-whisper-large-v3-turbo", "deepdml/faster-whisper-large-v3-turbo-ct2",
+                       "large-v3-turbo"],
+    "turbo": ["dropbox-dash/faster-whisper-large-v3-turbo", "deepdml/faster-whisper-large-v3-turbo-ct2", "turbo"],
+}
+
+# Exemple ponctué dans la langue de la vidéo (court : Whisper le prend comme texte précédent, pas comme
+# consigne), pour inciter à ponctuer. Désactivé tant que son effet n'est pas mesuré : sur une vidéo d'essai,
+# il a ralenti la transcription de 59 à 165 s avec le modèle « small ».
+INVITE_PONCTUATION = False
+INVITES = {
+    "fr": "Bonjour. Alors, qu'est-ce que tu veux ? D'accord, c'est terminé !",
+    "en": "Hello. So, what do you want? Okay, it's over!",
+    "es": "Hola. Entonces, ¿qué quieres? ¡Vale, se acabó!",
+    "de": "Hallo. Also, was willst du? Okay, es ist vorbei!",
+    "it": "Ciao. Allora, cosa vuoi? Va bene, è finita!",
+    "pt": "Olá. Então, o que você quer? Tudo bem, acabou!",
+    "nl": "Hallo. Dus, wat wil je? Oké, het is voorbij!",
+}
+
+# Phrases que Whisper invente sur du silence ou de la musique (génériques de sous-titrage de ses données)
+HALLUCINATIONS = re.compile(
+    r"sous-titr|amara\.org|merci d'avoir regardé|abonnez-vous|thanks? (you )?for watching|subtitles by|"
+    r"subscribe to|untertitel (im auftrag|der amara|von)|subtítulos (realizados|por)|legendas pela|"
+    r"sottotitoli (creati|a cura)|ondertiteling",
+    re.IGNORECASE,
+)
+NO_SPEECH_MAX = 0.6  # phrase écartée si Whisper la juge probablement non parlée…
+LOGPROB_MIN = -1.0  # … et peu sûre
+COMPRESSION_MAX = 2.6  # texte qui se répète en boucle (« oui oui oui oui… » sur 30 s)
+
+
+def charger_modele(nom: str, device: str, compute_type: str):
+    """Modèle Whisper, depuis le premier dépôt disponible (voir DEPOTS)."""
+    from faster_whisper import WhisperModel
+
+    racine = str(get_settings().models_dir / "whisper")
+    erreur: Exception | None = None
+    for depot in DEPOTS.get(nom, [nom]):
+        try:
+            return WhisperModel(depot, device=device, compute_type=compute_type, download_root=racine)
+        except Exception as exc:  # noqa: BLE001 — dépôt déplacé ou injoignable : on essaie le suivant
+            logger.warning("Modèle Whisper %s indisponible (%s)", depot, exc)
+            erreur = exc
+    raise RuntimeError(f"Impossible de charger le modèle de transcription {nom} : {erreur}")
+
 
 def fusionner_fragments(segments: list[Segment]) -> list[Segment]:
     """Recolle les phrases coupées par Whisper (« …into another » + « language. »).
@@ -66,6 +122,29 @@ def fusionner_fragments(segments: list[Segment]) -> list[Segment]:
     return fusion
 
 
+def est_hallucination(texte: str, no_speech: float, logprob: float, compression: float,
+                      precedent: str | None = None) -> bool:
+    """Phrase que Whisper a probablement inventée : générique connu, silence jugé non parlé et transcrit
+    sans assurance, boucle de répétition, ou même texte que la phrase précédente (Whisper qui bégaie)."""
+    propre = texte.strip()
+    if not propre:
+        return True
+    if len(propre) <= 90 and HALLUCINATIONS.search(propre):
+        return True
+    if no_speech > NO_SPEECH_MAX and logprob < LOGPROB_MIN:
+        return True
+    if compression > COMPRESSION_MAX:
+        return True
+    return precedent is not None and len(propre) > 12 and propre.casefold() == precedent.strip().casefold()
+
+
+def termes_du_glossaire(glossaire: str) -> list[str]:
+    """Termes de la langue d'origine du glossaire (« terme = traduction ») : noms propres, marques…"""
+    from pipeline.translate import lire_glossaire
+
+    return [terme for terme, _ in lire_glossaire(glossaire)][:30]
+
+
 def _charger_16k(audio: Path):
     """Signal mono 16 kHz (float32) attendu par Whisper."""
     import librosa
@@ -75,42 +154,63 @@ def _charger_16k(audio: Path):
     return signal.astype(np.float32)
 
 
-def transcribe(audio: Path, on_progress: Callable[[float], None] | None = None) -> Transcription:
-    """Transcrit l'audio et détecte sa langue. `on_progress` reçoit une valeur entre 0 et 1."""
-    from faster_whisper import WhisperModel
+def _detecter_langue(model, signal) -> tuple[str, float]:
+    """Langue majoritaire sur plusieurs passages parlés (pas seulement les 30 premières secondes)."""
+    try:
+        langue, probabilite, _ = model.detect_language(signal, vad_filter=True, language_detection_segments=4)
+        return langue, float(probabilite)
+    except Exception as exc:  # noqa: BLE001 — ancienne version : détection faite par transcribe()
+        logger.warning("Détection de langue sur plusieurs passages indisponible (%s)", exc)
+        return "", 0.0
 
+
+def transcribe(audio: Path, on_progress: Callable[[float], None] | None = None,
+               termes: list[str] | None = None) -> Transcription:
+    """Transcrit l'audio et détecte sa langue. `on_progress` reçoit une valeur entre 0 et 1 ; `termes`
+    (glossaire du projet) aide Whisper à reconnaître les noms propres."""
     runtime = get_runtime()
     logger.info("Chargement de Whisper %s (%s, %s)", runtime.whisper_model, runtime.device,
                 runtime.whisper_compute_type)
-    model = WhisperModel(
-        runtime.whisper_model,
-        device=runtime.device,
-        compute_type=runtime.whisper_compute_type,
-        download_root=str(get_settings().models_dir / "whisper"),
-    )
+    model = charger_modele(runtime.whisper_model, runtime.device, runtime.whisper_compute_type)
     try:
         # Le son est lu ici (WAV via soundfile) plutôt que par faster-whisper, qui passe par PyAV :
         # certaines versions de PyAV (Kaggle) refusent son option « metadata_errors ».
+        signal = _charger_16k(audio)
+        langue, probabilite = _detecter_langue(model, signal)
+        options = {}
+        if termes:
+            options["hotwords"] = ", ".join(termes)
         segments_iter, info = model.transcribe(
-            _charger_16k(audio), vad_filter=True, beam_size=5, word_timestamps=True
+            signal, language=langue or None, vad_filter=True, beam_size=5, word_timestamps=True,
+            initial_prompt=INVITES.get(langue) if INVITE_PONCTUATION else None, **options,
         )
-        logger.info("Langue détectée : %s (%.0f %%)", info.language, info.language_probability * 100)
+        langue, probabilite = langue or info.language, probabilite or info.language_probability
+        logger.info("Langue détectée : %s (%.0f %%)", langue, probabilite * 100)
 
         segments: list[Segment] = []
-        for i, seg in enumerate(segments_iter):
+        ecartees = 0
+        for seg in segments_iter:
+            texte = seg.text.strip()
+            if est_hallucination(texte, seg.no_speech_prob, seg.avg_logprob, seg.compression_ratio,
+                                 segments[-1].texte if segments else None):
+                ecartees += 1
+                logger.info("Phrase écartée (inventée par Whisper ?) : %r", texte[:80])
+                continue
             mots = [
                 {"mot": w.word.strip(), "debut": round(w.start, 2), "fin": round(w.end, 2)}
                 for w in (seg.words or [])
                 if w.word.strip()
             ]
-            segments.append(Segment(id=i, debut=round(seg.start, 2), fin=round(seg.end, 2),
-                                    texte=seg.text.strip(), mots=mots))
+            segments.append(Segment(id=len(segments), debut=round(seg.start, 2), fin=round(seg.end, 2),
+                                    texte=texte, mots=mots))
             if on_progress and info.duration:
                 on_progress(min(seg.end / info.duration, 1.0))
+        if ecartees:
+            logger.info("%d phrase(s) écartée(s) comme inventées par Whisper", ecartees)
 
         return Transcription(
-            langue=info.language,
-            probabilite=round(info.language_probability, 3),
+            langue=langue,
+            probabilite=round(probabilite, 3),
             duree_s=round(info.duration, 2),
             segments=fusionner_fragments(segments),
         )

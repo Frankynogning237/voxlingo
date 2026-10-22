@@ -301,8 +301,11 @@ def _traiter(job_id: str) -> None:
         separer(video, folder, on_progress=report)
 
     def do_transcribe(report: Callable[[float], None]) -> None:
+        from pipeline.transcribe import termes_du_glossaire
+
         voix_isolee = folder / "voix_isolee.wav"
-        result = transcribe(voix_isolee if voix_isolee.is_file() else audio, on_progress=report)
+        termes = termes_du_glossaire((status.get("options") or {}).get("glossaire", ""))
+        result = transcribe(voix_isolee if voix_isolee.is_file() else audio, on_progress=report, termes=termes)
         jobs.write_segments(job_id, result.to_dict())
         jobs.update_status(job_id, langue_source=result.langue, probabilite_langue=result.probabilite)
 
@@ -556,9 +559,60 @@ def _verifier_ressemblance(job_id: str, segments: list[dict], par_locuteur: dict
     return ressemblances
 
 
+def _verifier_ecoute(job_id: str, segments: list[dict], voix: dict[int, str], langue: str, dossier,
+                     nouvelles: set[int], report: Callable[[float], None]) -> dict[int, float]:
+    """Écoute de contrôle (pipeline/ecoute.py) des phrases générées à l'instant : chacune est retranscrite et
+    comparée à son texte ; celles qui ne le disent pas (mots sautés, déformés, inventés) sont refaites une fois
+    en mode stable, et la version la plus fidèle des deux est gardée. Renvoie la fidélité de chaque phrase."""
+    from pipeline.ecoute import mesurer, modele_ecoute, phrases_a_refaire
+    from pipeline.voice import VoiceError, fichier_brut, generer_voix
+
+    a_ecouter = [s for s in segments if s["id"] in nouvelles]
+    if not a_ecouter:
+        return {}
+    textes = {s["id"]: s["traduction"] for s in a_ecouter}
+    fichiers = {s["id"]: fichier_brut(dossier, s["id"]) for s in a_ecouter}
+    with modele_ecoute() as ecouter:
+        if ecouter is None:
+            return {}
+        fidelites = mesurer(fichiers, textes, langue, ecouter, _sous_progression(report, 0, 0.4))
+    refaire = phrases_a_refaire(fidelites)
+    logger.info("[%s] Écoute de contrôle : %d phrase(s) écoutée(s), %d à refaire", job_id, len(fidelites), len(refaire))
+    report(0.4)
+    if not refaire:
+        return fidelites
+
+    reprises = [s for s in a_ecouter if s["id"] in refaire]
+    avant = {s["id"]: dossier / f"avant_ecoute_{s['id']:05d}.wav" for s in reprises}
+    for s in reprises:
+        fichiers[s["id"]].replace(avant[s["id"]])
+        s["stabiliser"] = True  # diction plus sage, sans intonation importée : moins de mots avalés
+    try:
+        try:
+            generer_voix(reprises, langue, voix, dossier, on_progress=_sous_progression(report, 0.4, 0.85))
+        except VoiceError as exc:
+            logger.warning("[%s] Reprise des phrases infidèles impossible (%s) : versions d'origine gardées",
+                           job_id, exc)
+            return fidelites
+        with modele_ecoute() as ecouter:
+            nouvelles_fidelites = mesurer({i: fichiers[i] for i in refaire}, textes, langue, ecouter) if ecouter else {}
+        for ident, valeur in nouvelles_fidelites.items():
+            if valeur > fidelites[ident]:  # la reprise dit mieux son texte : on la garde
+                fidelites[ident] = valeur
+                avant[ident].unlink()
+        gardees = sum(1 for f in avant.values() if not f.is_file())
+        logger.info("[%s] %d phrase(s) refaite(s) après écoute, %d plus fidèle(s) gardée(s)", job_id, len(reprises),
+                    gardees)
+    finally:
+        for ident, fichier in avant.items():  # version d'origine plus fidèle (ou reprise interrompue) : remise
+            if fichier.is_file():
+                fichier.replace(fichiers[ident])
+    return fidelites
+
+
 def _do_voices(job_id: str, report: Callable[[float], None]) -> None:
     """Génère chaque phrase traduite avec la voix de son locuteur (seules les phrases modifiées sont refaites)."""
-    from pipeline.voice import Manifeste, generer_voix
+    from pipeline.voice import Manifeste, fichier_brut, generer_voix
 
     status = jobs.read_status(job_id)
     data = jobs.read_segments(job_id)
@@ -575,17 +629,30 @@ def _do_voices(job_id: str, report: Callable[[float], None]) -> None:
     for seg in data["segments"]:  # texte corrigé depuis : la phrase repart en mode normal (expressif)
         if seg.get("stabiliser") and deja.get(str(seg["id"]), {}).get("texte") != seg["traduction"]:
             seg.pop("stabiliser")
+    def empreinte_fichier(ident: int):
+        fichier = fichier_brut(dossier, ident)
+        return fichier.stat().st_mtime_ns if fichier.is_file() else None
+
+    avant = {s["id"]: empreinte_fichier(s["id"]) for s in data["segments"]}
     generees = generer_voix(data["segments"], status["langue_cible"], voix, dossier,
-                            on_progress=_sous_progression(report, 0.02, 0.85))
+                            on_progress=_sous_progression(report, 0.02, 0.75))
     # Chaque voix clonée doit ressembler à son locuteur : les phrases au timbre dérivé sont refaites
     ressemblances = _verifier_ressemblance(job_id, data["segments"], par_locuteur, voix, status["langue_cible"],
-                                           dossier, _sous_progression(report, 0.85, 1.0))
+                                           dossier, _sous_progression(report, 0.75, 0.85))
+    # Chaque phrase générée à l'instant doit dire son texte : écoute de contrôle, reprise si besoin
+    nouvelles = {s["id"] for s in data["segments"] if empreinte_fichier(s["id"]) != avant[s["id"]]}
+    fidelites = _verifier_ecoute(job_id, data["segments"], voix, status["langue_cible"], dossier, nouvelles,
+                                 _sous_progression(report, 0.85, 1.0))
     stabilisees = {s["id"] for s in data["segments"] if s.get("stabiliser")}
     # Voix réellement utilisée pour chaque locuteur : l'interface signale un changement non généré
     data = jobs.read_segments(job_id)
     for seg in data["segments"]:
         if seg["id"] in ressemblances:
             seg["ressemblance"] = ressemblances[seg["id"]]
+        if seg["id"] in fidelites:
+            seg["fidelite"] = fidelites[seg["id"]]
+        elif seg["id"] in nouvelles:
+            seg.pop("fidelite", None)  # nouvelle voix non écoutée (phrase trop courte) : ancienne mesure caduque
         if seg["id"] in stabilisees:
             seg["stabiliser"] = True  # gardé : la phrase reste « à jour » pour le cache des voix
         else:

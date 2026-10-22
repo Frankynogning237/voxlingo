@@ -331,6 +331,9 @@ const LIBELLES_DUREE = {
   },
 } as const
 
+/** Sous ce seuil (backend/pipeline/ecoute.py), la voix générée ne dit pas exactement son texte. */
+const FIDELITE_MIN = 0.65
+
 /** La phrase gagnerait à être ajustée sans être trop longue (calée sur les pauses, ou allongée). */
 const dureeAAjuster = (s: Segment, modifiee: boolean) => (!modifiee && s.duree_a_ajuster ? LIBELLES_DUREE[s.duree_a_ajuster] : null)
 
@@ -476,7 +479,8 @@ function SegmentRow({
   const [menu, setMenu] = useState(false)
   const alerte = tropLong(seg, traduction, langues.strategie, langues.cible, langues.facteur)
   const ajustement = seg.ajustement && seg.ajustement !== 'a_revoir' && !modifie ? LIBELLES_AJUSTEMENT[seg.ajustement] : null
-  const duree = alerte ? null : dureeAAjuster(seg, modifie)
+  const voixInfidele = !alerte && !modifie && seg.fidelite !== undefined && seg.fidelite < FIDELITE_MIN
+  const duree = alerte || voixInfidele ? null : dureeAAjuster(seg, modifie)
   return (
     <motion.div
       variants={cardVariants}
@@ -523,6 +527,18 @@ function SegmentRow({
               <TriangleAlert className="size-3.5" /> Trop long
             </motion.span>
           )}
+          {voixInfidele && (
+            <motion.span
+              initial={{ opacity: 0, y: 4 }}
+              animate={{ opacity: 1, y: 0 }}
+              title={`La voix générée ne dit pas exactement son texte (mots sautés ou déformés, fidélité ${Math.round(
+                (seg.fidelite ?? 0) * 100,
+              )} %), même après une reprise automatique. Écoutez-la, puis « Refaire la voix de cette phrase » ou reformulez.`}
+              className="flex items-center gap-1.5 rounded-full border border-rose-400/60 bg-rose-400/10 px-3 py-1 text-[13px] whitespace-nowrap text-rose-200"
+            >
+              <Volume2 className="size-3.5" /> Voix à vérifier
+            </motion.span>
+          )}
           {duree && (
             <motion.span
               initial={{ opacity: 0, y: 4 }}
@@ -533,7 +549,7 @@ function SegmentRow({
               <Timer className="size-3.5" /> {duree.texte}
             </motion.span>
           )}
-          {!alerte && !duree && ajustement && (
+          {!alerte && !voixInfidele && !duree && ajustement && (
             <motion.span
               initial={{ opacity: 0, y: 4 }}
               animate={{ opacity: 1, y: 0 }}
@@ -543,7 +559,7 @@ function SegmentRow({
               <Scissors className="size-3.5" /> {ajustement.texte}
             </motion.span>
           )}
-          {!alerte && !duree && !ajustement && !modifie && seg.ton && (
+          {!alerte && !voixInfidele && !duree && !ajustement && !modifie && seg.ton && (
             <BadgeTon ton={seg.ton} corrige={!!seg.ton_corrige} onChange={onTone} />
           )}
           {!alerte && !ajustement && modifie && (

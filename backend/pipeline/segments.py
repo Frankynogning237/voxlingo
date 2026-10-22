@@ -136,8 +136,13 @@ def est_trop_long(seg: dict[str, Any], traduction: str, source: str | None, cibl
 
 
 def _texte(mots: list[dict[str, Any]]) -> str:
+    """Texte d'une suite de mots minutés : ni espace avant la ponctuation, ni autour d'une apostrophe
+    (Whisper livre « n » + « 'entends » ou « jusqu' » + « à » comme deux mots)."""
     texte = " ".join(m["mot"] for m in mots)
-    return re.sub(r"\s+([,;:.!?…])", r"\1", texte).strip()
+    texte = re.sub(r"\s+([,;:.!?…])", r"\1", texte)
+    texte = re.sub(r"\s+(['’]\w)", r"\1", texte)
+    texte = re.sub(r"(\w['’])\s+(?=\w)", r"\1", texte)
+    return texte.strip()
 
 
 def _points_de_coupure(mots: list[dict[str, Any]]) -> list[int]:

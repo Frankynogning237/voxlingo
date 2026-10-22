@@ -221,6 +221,8 @@ export type Segment = {
   ajustement?: 'raccourcie' | 'decoupee' | 'calee' | 'allongee' | 'a_revoir'
   /** Ajustement de durée utile à cette phrase (elle tient dans son temps, mais ne colle pas à la scène) */
   duree_a_ajuster?: 'caler' | 'allonger' | null
+  /** Écoute de contrôle : ressemblance (0 à 1) entre ce que dit la voix générée et son texte */
+  fidelite?: number
   duree_doublage?: number
   facteur_voix?: number
   locuteur?: string
