@@ -368,11 +368,100 @@ def lignes_de_texte(image, prolonger: bool = True):
     return lignes
 
 
+URL_LAMA = "https://github.com/Sanster/models/releases/download/add_big_lama/big-lama.pt"
+MD5_LAMA = "e3aa4aaa15225a33ec84f9f4bc47e500"
+_LAMA_EN_PANNE: list[str] = []  # raison de la panne de LaMa pendant ce processus (repli sur Telea)
+
+
+@lru_cache(maxsize=1)
+def _retoucheur():
+    """Modèle de retouche LaMa (big-lama, TorchScript, ~200 Mo) sur la carte graphique, téléchargé au
+    premier usage. None sur processeur (Telea suffit et LaMa y prendrait plusieurs secondes par image)
+    ou si le modèle ne peut pas être chargé."""
+    from config import get_runtime, get_settings
+
+    if get_runtime().device != "cuda":
+        return None
+    try:
+        import hashlib
+
+        import httpx
+        import torch
+
+        dossier = get_settings().models_dir / "texte"
+        dossier.mkdir(parents=True, exist_ok=True)
+        modele = dossier / "big-lama.pt"
+        if not modele.is_file():
+            logger.info("Téléchargement du modèle de retouche LaMa (~200 Mo)…")
+            partiel = dossier / "big-lama.part"
+            empreinte = hashlib.md5()
+            with httpx.stream("GET", URL_LAMA, follow_redirects=True, timeout=300) as r:
+                r.raise_for_status()
+                with partiel.open("wb") as f:
+                    for bloc in r.iter_bytes():
+                        f.write(bloc)
+                        empreinte.update(bloc)
+            if empreinte.hexdigest() != MD5_LAMA:
+                partiel.unlink(missing_ok=True)
+                raise ValueError("fichier téléchargé corrompu")
+            partiel.replace(modele)
+        return torch.jit.load(str(modele), map_location="cuda").eval()
+    except Exception as e:  # noqa: BLE001 — sans LaMa, l'effacement continue avec Telea
+        logger.warning("Retouche LaMa indisponible (%s) : effacement par Telea.", e)
+        return None
+
+
+def _lama(modele, morceau, masque):
+    """Reconstruit par LaMa les pixels masqués (≠ 0) de `morceau` (BGR) ; renvoie l'image complète."""
+    import numpy as np
+    import torch
+    import torch.nn.functional as F
+
+    h, w = masque.shape
+    appareil = next(modele.parameters()).device
+    with torch.inference_mode():
+        x = torch.from_numpy(np.ascontiguousarray(morceau[..., ::-1])).to(appareil)
+        x = x.permute(2, 0, 1)[None].float() / 255.0
+        m = torch.from_numpy(masque).to(appareil)[None, None].gt(0).float()
+        bas, droite = -h % 8, -w % 8  # le réseau veut des côtés multiples de 8
+        if bas or droite:
+            x = F.pad(x, (0, droite, 0, bas), mode="reflect")
+            m = F.pad(m, (0, droite, 0, bas), mode="reflect")
+        y = modele(x, m)[0, :, :h, :w].clamp(0, 1).mul(255).round().byte()
+        return y.permute(1, 2, 0).cpu().numpy()[..., ::-1]
+
+
+def _reconstruire(roi, masque, a: int, b: int, g: int, d: int) -> None:
+    """Reconstruit, dans `roi` (modifiée sur place), les pixels masqués du rectangle [a:b, g:d] : par LaMa
+    sur carte graphique (rendu propre sur fond texturé : nourriture, fourrure, foule), sinon par Telea.
+    Seuls les pixels masqués changent."""
+    import cv2
+    import numpy as np
+
+    modele = None if _LAMA_EN_PANNE else _retoucheur()
+    if modele is not None:
+        # LaMa s'appuie sur un contexte plus large que Telea pour prolonger les motifs du décor
+        marge = 24
+        a2, b2 = max(0, a - marge), min(roi.shape[0], b + marge)
+        g2, d2 = max(0, g - marge), min(roi.shape[1], d + marge)
+        try:
+            retouche = _lama(modele, roi[a2:b2, g2:d2], masque[a2:b2, g2:d2])
+        except Exception as e:  # noqa: BLE001 — mémoire graphique saturée, pilote… : repli sur Telea
+            logger.warning("Retouche LaMa en échec (%r) : effacement par Telea pour la suite.", e)
+            _LAMA_EN_PANNE.append(repr(e))
+        else:
+            garde = masque[a2:b2, g2:d2] > 0
+            roi[a2:b2, g2:d2][garde] = retouche[garde]
+            return
+    roi[a:b, g:d] = cv2.inpaint(np.ascontiguousarray(roi[a:b, g:d]), masque[a:b, g:d], 3, cv2.INPAINT_TELEA)
+
+
 def effacer_texte(image, zone: tuple[int, int, int, int], memoire: dict | None = None) -> None:
     """Efface, dans `image` (BGR, modifiée sur place), le texte incrusté situé dans la zone.
 
     Le texte est repéré par un détecteur de texte (PP-OCR) : seules les lettres, leur contour et leur
-    ombre sont reconstruits à partir des pixels voisins (inpainting), le reste de la zone n'est pas
+    ombre sont reconstruits à partir des pixels voisins (inpainting : LaMa sur carte graphique, Telea
+    sur processeur, voir `_reconstruire`), le reste de la zone n'est pas
     touché et une image sans texte n'est pas modifiée. Ni flou ni cadre.
 
     `memoire` (un dict propre à la vidéo) relie les images successives : quand la zone n'a pas changé
@@ -420,7 +509,7 @@ def effacer_texte(image, zone: tuple[int, int, int, int], memoire: dict | None =
         bord = 8
         a, b = max(0, ys.min() - bord), min(roi.shape[0], ys.max() + bord + 1)
         g, d = max(0, xs.min() - bord), min(roi.shape[1], xs.max() + bord + 1)
-        roi[a:b, g:d] = cv2.inpaint(np.ascontiguousarray(roi[a:b, g:d]), masque[a:b, g:d], 3, cv2.INPAINT_TELEA)
+        _reconstruire(roi, masque, a, b, g, d)
     if memoire is not None:
         memoire["resultat"] = roi.copy()
 
