@@ -247,6 +247,8 @@ export type Transcription = {
   locuteurs?: Record<string, { nom: string; couleur: string; voix?: string }>
   fiche?: FicheVideo | null
   scenes?: Scene[]
+  /** Durée réelle / durée estimée des voix dans cette langue (calibrage appris sur les voix générées) */
+  facteur_debit?: number
 }
 
 async function request<T>(path: string): Promise<T> {
@@ -553,5 +555,9 @@ export async function dressingPreview(id: string, reglages: Habillage, instant: 
   if (!res.ok) throw new Error((await res.json().catch(() => null))?.detail ?? `Erreur serveur (${res.status})`)
   return URL.createObjectURL(await res.blob())
 }
+
+/** Zone des anciens sous-titres incrustés, trouvée automatiquement (null si aucun sous-titre). */
+export const detectOldSubtitles = (id: string) =>
+  send<{ zone: Habillage['zone'] | null }>(`/jobs/${id}/habillage/zone`, 'POST')
 
 export const LIBELLES_AGE: Record<AgeVoix, string> = { enfant: 'Enfant', jeune: 'Jeune', adulte: 'Adulte', senior: 'Senior' }

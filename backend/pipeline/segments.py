@@ -41,9 +41,17 @@ def marquer_fin_max(segments: list[dict[str, Any]], duree_video: float | None) -
         seg["fin_max"] = round(max(seg["fin"], limite), 2)
 
 
+def duree_voix_brute(traduction: str, cible: str | None) -> float:
+    """Durée de la phrase au débit théorique de la voix (syllabes), sans calibrage."""
+    return compter_syllabes(traduction) / (debit(cible) * FACTEUR_DEBIT_XTTS)
+
+
 def duree_voix_estimee(traduction: str, cible: str | None, vitesse: float = 1.0) -> float:
-    """Durée estimée de la phrase lue par XTTS à la vitesse donnée."""
-    return compter_syllabes(traduction) / (debit(cible) * FACTEUR_DEBIT_XTTS * vitesse)
+    """Durée estimée de la phrase lue par la voix doublée à la vitesse donnée, corrigée par le débit
+    réellement mesuré sur les voix déjà générées dans cette langue (pipeline/calibrage.py)."""
+    from pipeline.calibrage import facteur
+
+    return duree_voix_brute(traduction, cible) * facteur(cible) / vitesse
 
 
 def vitesse_xtts(seg: dict[str, Any], traduction: str, cible: str | None) -> float:
@@ -74,7 +82,9 @@ REMPLISSAGE_CIBLE = 0.95
 
 def syllabes_pour_duree(duree_s: float, cible: str | None) -> int:
     """Nombre de syllabes que la voix doublée prononce en `duree_s` secondes, à son débit naturel."""
-    return max(1, round(duree_s * debit(cible) * FACTEUR_DEBIT_XTTS))
+    from pipeline.calibrage import facteur
+
+    return max(1, round(duree_s * debit(cible) * FACTEUR_DEBIT_XTTS / facteur(cible)))
 
 
 def est_trop_court(seg: dict[str, Any], traduction: str, cible: str | None) -> bool:
@@ -88,14 +98,16 @@ def a_caler(seg: dict[str, Any]) -> bool:
     return seg["fin"] - seg["debut"] >= DUREE_LONGUE_S and len(decouper(seg)) > 1
 
 
-def besoin_ajustement(seg: dict[str, Any], cible: str | None) -> str | None:
+def besoin_ajustement(seg: dict[str, Any], cible: str | None, reessayer: bool = False) -> str | None:
     """Ajustement de durée utile à une phrase qui tient dans son temps : « caler » (phrase longue à
-    découper aux pauses d'origine), « allonger » (traduction trop courte) ou None."""
+    découper aux pauses d'origine), « allonger » (traduction trop courte) ou None.
+
+    Un allongement déjà essayé sans succès n'est retenté que sur demande (`reessayer`)."""
     if not seg.get("traduction"):
         return None
     if a_caler(seg):
         return "caler"
-    if not seg.get("allongement_essaye") and est_trop_court(seg, seg["traduction"], cible):
+    if (reessayer or not seg.get("allongement_essaye")) and est_trop_court(seg, seg["traduction"], cible):
         return "allonger"
     return None
 

@@ -346,6 +346,28 @@ def carte_texte(roi):
     return cv2.resize(carte[0, 0], (w, h))
 
 
+def lignes_de_texte(image, prolonger: bool = True):
+    """Masque (0/1, taille de `image`) des lignes de texte incrusté repérées par le détecteur.
+
+    Le détecteur rend le « cœur » rétréci de chaque ligne : chaque ligne est élargie comme dans DB
+    (« unclip » : décalage = surface × 1,8 / périmètre), pour couvrir accents, jambages et contour, et
+    prolongée d'une hauteur et demie de chaque côté (émoji ou ponctuation que le détecteur ignore) si
+    `prolonger`."""
+    import cv2
+    import numpy as np
+
+    noyau = (carte_texte(image) > 0.3).astype(np.uint8)
+    lignes = np.zeros(noyau.shape, np.uint8)
+    n, _, stats, _ = cv2.connectedComponentsWithStats(noyau, connectivity=8)
+    for x, y, l, h, surface in stats[1:n]:
+        if surface < 6:
+            continue
+        d = int(np.ceil(surface * 1.8 / (2 * (l + h)))) + 2
+        cote = d + int(1.5 * (h + 2 * d)) if prolonger else d
+        cv2.rectangle(lignes, (x - cote, y - d), (x + l + cote, y + h + d), 1, -1)
+    return lignes
+
+
 def effacer_texte(image, zone: tuple[int, int, int, int], memoire: dict | None = None) -> None:
     """Efface, dans `image` (BGR, modifiée sur place), le texte incrusté situé dans la zone.
 
@@ -353,8 +375,10 @@ def effacer_texte(image, zone: tuple[int, int, int, int], memoire: dict | None =
     ombre sont reconstruits à partir des pixels voisins (inpainting), le reste de la zone n'est pas
     touché et une image sans texte n'est pas modifiée. Ni flou ni cadre.
 
-    `memoire` (un dict propre à la vidéo) évite de tout recalculer quand la zone n'a pas changé depuis
-    l'image précédente (plan fixe, sous-titre identique) : le résultat précédent est réutilisé."""
+    `memoire` (un dict propre à la vidéo) relie les images successives : quand la zone n'a pas changé
+    depuis l'image précédente (plan fixe, sous-titre identique), le résultat précédent est réutilisé ;
+    sinon, les lignes trouvées sur l'image précédente sont effacées aussi, pour qu'un sous-titre que le
+    détecteur manque sur une seule image ne réapparaisse pas le temps d'un clignement."""
     import cv2
     import numpy as np
 
@@ -362,26 +386,21 @@ def effacer_texte(image, zone: tuple[int, int, int, int], memoire: dict | None =
     roi = image[y0:y1, x0:x1]
     if roi.size == 0:
         return
+    precedentes = None
     if memoire is not None:
         avant = memoire.get("source")
         if avant is not None and avant.shape == roi.shape and cv2.absdiff(avant, roi).mean() < 1.0:
             roi[:] = memoire["resultat"]
             return
         memoire["source"] = roi.copy()
-        memoire["resultat"] = roi  # remplacé ci-dessous si du texte est effacé
-    noyau = (carte_texte(roi) > 0.3).astype(np.uint8)
-    n, _, stats, _ = cv2.connectedComponentsWithStats(noyau, connectivity=8)
-    if n <= 1:
-        return
-    # Le détecteur rend le « cœur » rétréci de chaque ligne de texte : chaque ligne est élargie comme dans
-    # DB (« unclip » : décalage = surface × 1,8 / périmètre), pour couvrir accents, jambages et contour
-    lignes = np.zeros(noyau.shape, np.uint8)
-    for x, y, l, h, surface in stats[1:]:
-        if surface < 6:
-            continue
-        d = int(np.ceil(surface * 1.8 / (2 * (l + h)))) + 2
-        cote = d + int(1.5 * (h + 2 * d))  # émoji ou ponctuation en bout de ligne, que le détecteur ignore
-        cv2.rectangle(lignes, (x - cote, y - d), (x + l + cote, y + h + d), 1, -1)
+        memoire["resultat"] = roi.copy()  # remplacé ci-dessous si du texte est effacé
+        precedentes = memoire.get("lignes")
+    trouvees = lignes_de_texte(roi)
+    lignes = trouvees
+    if precedentes is not None and precedentes.shape == trouvees.shape:
+        lignes = trouvees | precedentes
+    if memoire is not None:
+        memoire["lignes"] = trouvees
     if not lignes.any():
         return
     # Dans ces lignes, seuls les pixels des lettres (clairs ou jaunes), de leur contour et de leur ombre
@@ -404,6 +423,55 @@ def effacer_texte(image, zone: tuple[int, int, int, int], memoire: dict | None =
         roi[a:b, g:d] = cv2.inpaint(np.ascontiguousarray(roi[a:b, g:d]), masque[a:b, g:d], 3, cv2.INPAINT_TELEA)
     if memoire is not None:
         memoire["resultat"] = roi.copy()
+
+
+def detecter_zone(video: Path, images: int = 16) -> dict[str, float] | None:
+    """Zone des anciens sous-titres incrustés, trouvée sur quelques images réparties dans la vidéo.
+
+    Les sous-titres sont des lignes de texte centrées horizontalement qui reviennent à la même hauteur
+    d'une image à l'autre ; un logo ou un filigrane dans un coin (TikTok…) n'en fait pas partie. Renvoie la
+    zone en fractions de l'image {x, y, l, h}, ou None si aucun sous-titre n'apparaît."""
+    import cv2
+    import numpy as np
+
+    duree = probe_duration(video)
+    taille = taille_affichee(video)
+    largeur = min(960, taille.largeur) // 2 * 2
+    hauteur = round(taille.hauteur * largeur / taille.largeur / 2) * 2
+    ffmpeg = _require("ffmpeg")
+    boites: list[tuple[int, float, float, float, float]] = []  # image, x0, y0, x1, y1 (fractions)
+    for k in range(images):
+        t = (k + 0.5) * duree / images
+        brute = subprocess.run(
+            [ffmpeg, "-v", "error", "-ss", f"{t:.3f}", "-i", str(video), "-frames:v", "1",
+             "-vf", f"scale={largeur}:{hauteur}", "-f", "rawvideo", "-pix_fmt", "bgr24", "pipe:1"],
+            capture_output=True).stdout
+        if len(brute) < largeur * hauteur * 3:
+            continue
+        image = np.frombuffer(brute[: largeur * hauteur * 3], np.uint8).reshape(hauteur, largeur, 3)
+        n, _, stats, _ = cv2.connectedComponentsWithStats(lignes_de_texte(image, prolonger=False), connectivity=8)
+        for x, y, l, h, _ in stats[1:n]:
+            cx = (x + l / 2) / largeur
+            if h <= 0.18 * hauteur and l >= 0.08 * largeur and abs(cx - 0.5) <= 0.2:
+                boites.append((k, x / largeur, y / hauteur, (x + l) / largeur, (y + h) / hauteur))
+    if not boites:
+        return None
+    # Hauteur où reviennent le plus de lignes (sur le plus d'images différentes)
+    def voisines(b):
+        centre = (b[2] + b[4]) / 2
+        return [o for o in boites if abs((o[2] + o[4]) / 2 - centre) <= 0.08]
+
+    groupe = max((voisines(b) for b in boites), key=lambda g: len({o[0] for o in g}))
+    if len({o[0] for o in groupe}) < 2:
+        return None  # texte vu sur une seule image : sans doute du décor, pas des sous-titres
+    x0, y0 = min(o[1] for o in groupe), min(o[2] for o in groupe)
+    x1, y1 = max(o[3] for o in groupe), max(o[4] for o in groupe)
+    # Marge pour les sous-titres plus longs que ceux vus sur les images analysées, sans aller jusqu'aux bords
+    # (un filigrane dans un coin reste en dehors)
+    marge_x, marge_y = 0.04, 0.02
+    x0, x1 = max(0.02, x0 - marge_x), min(0.98, x1 + marge_x)
+    y0, y1 = max(0.0, y0 - marge_y), min(1.0, y1 + marge_y)
+    return {"x": round(float(x0), 3), "y": round(float(y0), 3), "l": round(float(x1 - x0), 3), "h": round(float(y1 - y0), 3)}
 
 
 # ---------------------------------------------------------------------------------------------------

@@ -154,8 +154,9 @@ const CAPACITE: Record<StrategieDuree, number> = {
  * Vrai si la voix doublée ne tient pas dans le temps disponible (durée de la phrase + silence
  * avant la suivante) sans dépasser l'accélération permise par la stratégie choisie.
  */
-function tropLong(seg: Segment, traduction: string, strategie: StrategieDuree, cible?: string | null) {
-  const dureeVoix = syllabes(traduction) / (debit(cible) * FACTEUR_DEBIT_XTTS)
+function tropLong(seg: Segment, traduction: string, strategie: StrategieDuree, cible?: string | null, facteur = 1) {
+  // `facteur` : débit réel des voix mesuré dans cette langue (backend/pipeline/calibrage.py)
+  const dureeVoix = (syllabes(traduction) / (debit(cible) * FACTEUR_DEBIT_XTTS)) * facteur
   const disponible = Math.max((seg.fin_max ?? seg.fin) - seg.debut, 0.1)
   return dureeVoix / disponible > CAPACITE[strategie]
 }
@@ -451,7 +452,7 @@ function SegmentRow({
   onRefaire,
 }: {
   seg: Segment
-  langues: { source?: string | null; cible?: string | null; strategie: StrategieDuree }
+  langues: { source?: string | null; cible?: string | null; strategie: StrategieDuree; facteur?: number }
   traduction: string
   selectionne: boolean
   enLecture: boolean
@@ -473,7 +474,7 @@ function SegmentRow({
   onRefaire: () => void
 }) {
   const [menu, setMenu] = useState(false)
-  const alerte = tropLong(seg, traduction, langues.strategie, langues.cible)
+  const alerte = tropLong(seg, traduction, langues.strategie, langues.cible, langues.facteur)
   const ajustement = seg.ajustement && seg.ajustement !== 'a_revoir' && !modifie ? LIBELLES_AJUSTEMENT[seg.ajustement] : null
   const duree = alerte ? null : dureeAAjuster(seg, modifie)
   return (
@@ -684,11 +685,11 @@ export function TranslationEditor({ job }: { job: Job }) {
   // Phrases dont le texte d'origine a été corrigé : leur traduction est à refaire
   const aRetraduire = segments.filter((s) => s.a_retraduire || originalModifie(s)).map((s) => s.id)
   const strategie: StrategieDuree = job.options?.strategie_duree ?? 'reformuler'
-  const langues = { source: data?.langue ?? job.langue_source, cible: job.langue_cible, strategie }
-  const nbTropLongs = segments.filter((s) => tropLong(s, traductions[s.id], strategie, langues.cible)).length
+  const langues = { source: data?.langue ?? job.langue_source, cible: job.langue_cible, strategie, facteur: data?.facteur_debit ?? 1 }
+  const nbTropLongs = segments.filter((s) => tropLong(s, traductions[s.id], strategie, langues.cible, langues.facteur)).length
   // Phrases qui tiennent mais ne collent pas à leur scène (longues à caler, trop courtes)
   const nbDurees = segments.filter(
-    (s) => !tropLong(s, traductions[s.id], strategie, langues.cible) && dureeAAjuster(s, traductions[s.id] !== s.traduction),
+    (s) => !tropLong(s, traductions[s.id], strategie, langues.cible, langues.facteur) && dureeAAjuster(s, traductions[s.id] !== s.traduction),
   ).length
   const nbAAjuster = nbTropLongs + nbDurees
   const vide = segments.some((s) => !traductions[s.id]?.trim())

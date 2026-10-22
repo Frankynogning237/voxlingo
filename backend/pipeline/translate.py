@@ -423,9 +423,9 @@ def allonger(client: httpx.Client, modele: str, original: str, traduction: str,
     ], traduction, "l'allongement")
 
 
-def _reformuler(client: httpx.Client, modele: str, systeme: str, lignes: list[str], traduction: str,
-                quoi: str) -> str:
-    prompt = "\n".join(_avec_consignes(lignes))
+def _demander(client: httpx.Client, modele: str, systeme: str, prompt: str, proprietes: dict[str, Any],
+              temperature: float, quoi: str) -> dict[str, Any]:
+    """Une question au modèle, réponse JSON imposée (`proprietes` : schéma de chaque champ)."""
     reponse = client.post(
         "/api/chat",
         json={
@@ -434,23 +434,94 @@ def _reformuler(client: httpx.Client, modele: str, systeme: str, lignes: list[st
                 {"role": "system", "content": systeme},
                 {"role": "user", "content": prompt},
             ],
-            "format": {
-                "type": "object",
-                "properties": {"translation": {"type": "string"}},
-                "required": ["translation"],
-            },
+            "format": {"type": "object", "properties": proprietes, "required": list(proprietes)},
             "stream": False,
-            "options": {"temperature": 0.4},
+            "options": {"temperature": temperature},
             "keep_alive": "2m",
             **options_modele(modele),
         },
     )
     reponse.raise_for_status()
     try:
-        texte = json.loads(reponse.json()["message"]["content"])["translation"].strip().strip('"').strip()
-    except (json.JSONDecodeError, KeyError, AttributeError) as exc:
+        donnees = json.loads(reponse.json()["message"]["content"])
+    except (json.JSONDecodeError, KeyError, AttributeError, TypeError) as exc:
         raise TranslationError(f"Réponse inattendue du modèle pendant {quoi}.") from exc
+    if not isinstance(donnees, dict):
+        raise TranslationError(f"Réponse inattendue du modèle pendant {quoi}.")
+    return donnees
+
+
+def _reformuler(client: httpx.Client, modele: str, systeme: str, lignes: list[str], traduction: str,
+                quoi: str) -> str:
+    donnees = _demander(client, modele, systeme, "\n".join(_avec_consignes(lignes)),
+                        {"translation": {"type": "string"}}, 0.4, quoi)
+    texte = str(donnees.get("translation") or "").strip().strip('"').strip()
     return texte or traduction
+
+
+SPLIT_PROMPT = (
+    "You prepare a dubbing. A long original line was cut into parts at the speaker's pauses, and each part "
+    "will be dubbed at its own moment. Split the given translation into exactly the same number of "
+    "consecutive parts, so that each translated part says what the original part at the same position says. "
+    "Reuse the words of the translation; only reorder or slightly rephrase when the target language needs it "
+    "for a part to match its original part. Every part must be non-empty. "
+    'Answer with strict JSON only: {"parts": ["...", "..."]}'
+)
+
+
+def repartir(client: httpx.Client, modele: str, parties: list[str], traduction: str,
+             source: str, cible: str) -> list[str] | None:
+    """Répartit la traduction complète d'une phrase entre ses morceaux (découpés aux pauses d'origine).
+
+    Garde le sens et la qualité de la traduction de la phrase entière, au lieu de traduire des fragments
+    isolés. Renvoie None si le modèle ne rend pas exactement un texte non vide par morceau, ou s'il
+    s'éloigne trop de la traduction (le découpage retombe alors sur une traduction morceau par morceau)."""
+    lignes = [
+        f"Source language: {LANGUAGE_NAMES.get(source, source)}",
+        f"Target language: {LANGUAGE_NAMES.get(cible, cible)}",
+        f"Original line, in {len(parties)} parts:",
+        *(f'{k + 1}. "{p}"' for k, p in enumerate(parties)),
+        f'Translation of the whole line: "{traduction}"',
+        f"Return exactly {len(parties)} parts.",
+    ]
+    try:
+        donnees = _demander(client, modele, SPLIT_PROMPT, "\n".join(_avec_consignes(lignes)),
+                            {"parts": {"type": "array", "items": {"type": "string"}}}, 0.2, "la répartition")
+    except TranslationError:
+        return None
+    morceaux = [str(m).strip().strip('"').strip() for m in donnees.get("parts") or []]
+    if len(morceaux) != len(parties) or not all(morceaux):
+        return None
+    # Les morceaux doivent reprendre la traduction (pas une nouvelle traduction, ni des mots perdus)
+    avant, apres = set(_normaliser(traduction).split()), set(_normaliser(" ".join(morceaux)).split())
+    if not avant or len(avant & apres) / len(avant) < 0.75 or len(apres - avant) > max(3, len(avant) // 3):
+        return None
+    return morceaux
+
+
+MEANING_PROMPT = (
+    "You check dubbing translations. Compare the ORIGINAL line with the NEW translation. Answer true only if "
+    "the new translation says the same thing as the original: same meaning, same speaker intent, nothing "
+    "important lost, and no new information added. Different wording, connectors or a fuller style are fine. "
+    'Answer with strict JSON only: {"same_meaning": true} or {"same_meaning": false}'
+)
+
+
+def meme_sens(client: httpx.Client, modele: str, original: str, traduction: str, source: str, cible: str) -> bool:
+    """La traduction dit-elle la même chose que l'original ? (vérification par le modèle ; en cas de
+    réponse illisible, on refuse par prudence)."""
+    lignes = [
+        f"Source language: {LANGUAGE_NAMES.get(source, source)}",
+        f"Target language: {LANGUAGE_NAMES.get(cible, cible)}",
+        f'ORIGINAL: "{original}"',
+        f'NEW translation: "{traduction}"',
+    ]
+    try:
+        donnees = _demander(client, modele, MEANING_PROMPT, "\n".join(lignes),
+                            {"same_meaning": {"type": "boolean"}}, 0.0, "la vérification du sens")
+    except TranslationError:
+        return False
+    return donnees.get("same_meaning") is True
 
 
 def _decharger_ollama(modele: str) -> None:

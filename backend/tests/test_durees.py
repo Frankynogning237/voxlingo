@@ -58,6 +58,8 @@ def ia(monkeypatch):
     monkeypatch.setattr(adjust, "allonger", allonger)
     monkeypatch.setattr(adjust, "raccourcir", lambda c, m, o, t, s, ci, n: _texte(n))
     monkeypatch.setattr(adjust, "traduction_suspecte", lambda *a: False)
+    monkeypatch.setattr(adjust, "meme_sens", lambda *a: True)
+    monkeypatch.setattr(adjust, "repartir", lambda *a: None)  # par défaut : traduction morceau par morceau
     monkeypatch.setattr(adjust, "ollama_disponible", lambda modele: True)
     monkeypatch.setattr(adjust, "_decharger_ollama", lambda modele: None)
     monkeypatch.setattr(adjust, "get_runtime", lambda: SimpleNamespace(ollama_model="qwen2.5:7b"))
@@ -143,3 +145,50 @@ def test_long_silence_apres_un_seul_mot_marque():
     morceaux = decouper(_phrase(0, mots, "x"))
     assert [len(m["mots"]) for m in morceaux][0] == 1
     assert morceaux[1]["debut"] == pytest.approx(mots[1]["debut"])
+
+
+def test_calage_reprend_la_traduction_complete(ia, monkeypatch):
+    """La traduction de la phrase entière est répartie entre les morceaux, sans retraduire de fragments."""
+    parts = []
+
+    def repartir(client, modele, parties, traduction, source, cible):
+        parts.append(parties)
+        # 0,4 s par mot d'origine : chaque morceau traduit remplit son moment
+        return [f"partie {k} " + _texte(syllabes_pour_duree(len(p.split()) * 0.38, cible))
+                for k, p in enumerate(parties)]
+
+    monkeypatch.setattr(adjust, "repartir", repartir)
+    mots = _mots(1.0, [(6, 0.6), (5, 0.5), (7, 0)])
+    data = {"segments": [_phrase(0, mots, _texte(syllabes_pour_duree(8.0, CIBLE)))], "duree_s": 12.0}
+    adjust.ajuster_segments(data, SOURCE, CIBLE, strategie="reformuler")
+    assert ia["traduire"] == 0 and len(parts) == 1
+    assert [s["traduction"].split()[1] for s in data["segments"]] == [str(k) for k in range(len(data["segments"]))]
+
+
+def test_allongement_qui_change_le_sens_refuse(ia, monkeypatch):
+    monkeypatch.setattr(adjust, "meme_sens", lambda *a: False)
+    seg = _phrase(0, _mots(0.0, [(10, 0)]), _texte(syllabes_pour_duree(1.6, CIBLE)))
+    texte = seg["traduction"]
+    data = {"segments": [seg], "duree_s": 6.0}
+    bilan = adjust.ajuster_segments(data, SOURCE, CIBLE, strategie="reformuler")
+    assert bilan["allongees"] == 0 and data["segments"][0]["traduction"] == texte
+
+
+def test_reessai_sur_demande_explicite(ia):
+    seg = _phrase(0, _mots(0.0, [(10, 0)]), _texte(syllabes_pour_duree(1.6, CIBLE)), allongement_essaye=True)
+    data = {"segments": [seg], "duree_s": 6.0}
+    assert not adjust.a_ajuster(data["segments"], SOURCE, CIBLE, "reformuler")
+    bilan = adjust.ajuster_segments(data, SOURCE, CIBLE, ids={0}, strategie="reformuler")
+    assert bilan["allongees"] == 1
+
+
+def test_calibrage_du_debit(tmp_path):
+    from pipeline import calibrage
+    from pipeline.segments import duree_voix_estimee
+
+    texte = _texte(30)
+    avant = duree_voix_estimee(texte, CIBLE)
+    assert calibrage.apprendre(CIBLE, [1.3, 1.25, 1.35, 1.3, 5.0]) == pytest.approx(1.3)  # 5,0 : aberrant
+    assert duree_voix_estimee(texte, CIBLE) == pytest.approx(avant * 1.3)
+    assert calibrage.apprendre(CIBLE, [1.0]) is None  # trop peu de mesures : rien n'est appris
+    assert calibrage.facteur("ja") == 1.0

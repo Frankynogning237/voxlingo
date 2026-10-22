@@ -2,12 +2,13 @@
 // amélioration légère de l'image et suppression des métadonnées. Réexport sans régénérer les voix.
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { AnimatePresence, motion } from 'framer-motion'
-import { Captions, Eraser, ImageUpscale, RotateCcw, ShieldCheck, Sparkles, Stamp, TriangleAlert, Wand2 } from 'lucide-react'
+import { Captions, Eraser, ImageUpscale, RotateCcw, ScanText, ShieldCheck, Sparkles, Stamp, TriangleAlert, Wand2 } from 'lucide-react'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 
 import { Panel, Switch } from '@/components/Controls'
 import { PrimaryButton } from '@/components/PrimaryButton'
 import {
+  detectOldSubtitles,
   dressingPreview,
   HABILLAGE_DEFAUT,
   setDressing,
@@ -311,6 +312,10 @@ export function Habillage({ job }: { job: Job }) {
     mutationFn: () => setDressing(job.id, reglages),
     onSuccess: (j) => queryClient.setQueryData(['job', job.id], j),
   })
+  const detecter = useMutation({
+    mutationFn: () => detectOldSubtitles(job.id),
+    onSuccess: ({ zone }) => zone && changer({ zone }),
+  })
 
   const etat = job.habillage
   const enCours = etat?.etat === 'en_cours'
@@ -437,6 +442,14 @@ export function Habillage({ job }: { job: Job }) {
             <div className="flex flex-wrap gap-1.5">
               <button
                 type="button"
+                onClick={() => detecter.mutate()}
+                disabled={detecter.isPending}
+                className="flex h-8 items-center gap-1.5 rounded-full border border-cyan-400/50 px-3 text-[13px] text-cyan-200 hover:border-cyan-300 disabled:opacity-60"
+              >
+                <ScanText className="size-4" /> {detecter.isPending ? 'Recherche…' : 'Détecter automatiquement'}
+              </button>
+              <button
+                type="button"
                 onClick={() => changer({ zone: HABILLAGE_DEFAUT.zone })}
                 className="h-8 rounded-full border border-white/15 px-3 text-[13px] text-white/80 hover:border-white/35 hover:text-white"
               >
@@ -450,6 +463,10 @@ export function Habillage({ job }: { job: Job }) {
                 Bande du haut
               </button>
             </div>
+            {detecter.data && !detecter.data.zone && (
+              <p className="text-[13px] text-white/60">Aucun sous-titre trouvé : tracez la zone sur l'aperçu.</p>
+            )}
+            {detecter.error && <p className="text-[13px] text-destructive">{(detecter.error as Error).message}</p>}
           </Option>
 
           <Option

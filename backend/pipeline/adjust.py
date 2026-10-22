@@ -43,8 +43,10 @@ from pipeline.translate import (
     _traduire_segment,
     allonger,
     compter_syllabes,
+    meme_sens,
     ollama_disponible,
     raccourcir,
+    repartir,
     traduction_suspecte,
 )
 
@@ -79,15 +81,16 @@ def _allonger(client: httpx.Client, modele: str, seg: dict[str, Any], traduction
               source: str, cible: str, strategie: str) -> str | None:
     """Fait reformuler une traduction trop courte un peu plus longuement, dans le même sens.
 
-    Renvoie la meilleure version obtenue (plus longue, qui tient toujours dans son temps et reste une
-    traduction plausible de l'original), ou None si aucune n'améliore la phrase."""
+    Renvoie la meilleure version obtenue (plus longue, qui tient toujours dans son temps et dont le
+    modèle confirme qu'elle dit la même chose que l'original), ou None si aucune n'améliore la phrase."""
     cible_syllabes = syllabes_pour_duree((seg["fin"] - seg["debut"]) * REMPLISSAGE_CIBLE, cible)
     meilleure, syllabes = None, compter_syllabes(traduction)
     for _ in range(ESSAIS_ALLONGER):
         longue = allonger(client, modele, seg["texte"], meilleure or traduction, source, cible,
                           max(syllabes + 1, round(cible_syllabes * 0.9)), round(cible_syllabes * 1.05))
         if (compter_syllabes(longue) <= syllabes or est_trop_long(seg, longue, source, cible, strategie)
-                or traduction_suspecte(seg["texte"], longue, source, cible)):
+                or traduction_suspecte(seg["texte"], longue, source, cible)
+                or not meme_sens(client, modele, seg["texte"], longue, source, cible)):
             continue
         meilleure, syllabes = longue, compter_syllabes(longue)
         if not est_trop_court(seg, longue, cible):
@@ -97,15 +100,20 @@ def _allonger(client: httpx.Client, modele: str, seg: dict[str, Any], traduction
 
 def _traduire_morceaux(client: httpx.Client, modele: str, seg: dict[str, Any], morceaux: list[dict[str, Any]],
                        source: str, cible: str, strategie: str, ajustement: str) -> list[dict[str, Any]]:
-    """Traduit chaque morceau d'une phrase découpée, calé sur son propre moment."""
+    """Traduit chaque morceau d'une phrase découpée, calé sur son propre moment.
+
+    La traduction de la phrase entière est d'abord répartie entre les morceaux (sens et qualité de la
+    phrase complète conservés) ; à défaut, chaque morceau est traduit avec les précédents pour contexte."""
     marquer_fin_max(morceaux, None)
     morceaux[-1]["fin_max"] = seg.get("fin_max", seg["fin"])
+    reparties = repartir(client, modele, [m["texte"] for m in morceaux], seg["traduction"], source, cible) \
+        if seg.get("traduction") else None
     traduits: list[str] = []
     for k, morceau in enumerate(morceaux):
         for cle in HERITAGE:
             if cle in seg:
                 morceau[cle] = seg[cle]
-        texte = _traduire_segment(client, modele, morceaux, k, source, cible, traduits)
+        texte = reparties[k] if reparties else _traduire_segment(client, modele, morceaux, k, source, cible, traduits)
         if est_trop_long(morceau, texte, source, cible, strategie):
             texte = _raccourcir(client, modele, morceau, texte, source, cible, strategie) or texte
         traduits.append(texte)
@@ -124,7 +132,7 @@ def _a_traiter(seg: dict[str, Any], ids: set[int] | None, source: str, cible: st
     # Une traduction corrigée à la main n'est retouchée que si l'on demande cette phrase précisément
     if ids is None and seg["traduction"] != seg.get("traduction_ia", seg["traduction"]):
         return None
-    return besoin_ajustement(seg, cible)
+    return besoin_ajustement(seg, cible, reessayer=ids is not None)
 
 
 def a_ajuster(segments: list[dict[str, Any]], source: str, cible: str, strategie: str | None,

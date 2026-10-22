@@ -597,6 +597,13 @@ def _do_voices(job_id: str, report: Callable[[float], None]) -> None:
     data["locuteurs"] = fiche
     jobs.write_segments(job_id, data)
     jobs.update_status(job_id, voix_generees=generees)
+    # Débit réel des voix : les prochaines estimations de durée (trop longue, trop courte) en tiennent compte
+    from pipeline.calibrage import apprendre, mesurer_projet
+
+    try:
+        apprendre(status["langue_cible"], mesurer_projet(data["segments"], status["langue_cible"], dossier))
+    except Exception:  # le calibrage ne doit jamais faire échouer le doublage
+        logger.exception("[%s] Calibrage du débit des voix", job_id)
 
 
 def _ajouter_intonation(job_id: str, status: dict, data: dict, par_locuteur: dict[str, str]) -> None:

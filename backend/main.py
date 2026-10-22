@@ -295,10 +295,12 @@ def get_segments(job_id: str) -> dict:
         marquer_fin_max(data["segments"], status.get("duree_s"))  # projets créés avant l'ajustement
     from pipeline.voice import fichier_brut
 
+    from pipeline.calibrage import facteur
     from pipeline.segments import besoin_ajustement
 
     dossier_voix = jobs.project_dir(job_id) / "voix"
     cible = status.get("langue_cible")
+    data["facteur_debit"] = facteur(cible)  # débit réel des voix, pour les alertes en direct de l'éditeur
     for seg in data["segments"]:
         seg["voix_disponible"] = fichier_brut(dossier_voix, seg["id"]).is_file()
         retouchee = seg.get("traduction") != seg.get("traduction_ia", seg.get("traduction"))
@@ -700,6 +702,20 @@ def dressing_preview(job_id: str, demande: DemandeApercuHabillage) -> Response:
     except FFmpegError as exc:
         raise HTTPException(500, str(exc)) from None
     return Response(image, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+
+@app.post("/jobs/{job_id}/habillage/zone")
+def detect_old_subtitles(job_id: str) -> dict:
+    """Zone des anciens sous-titres incrustés, trouvée automatiquement sur la vidéo d'origine
+    ({"zone": null} si aucun sous-titre n'apparaît)."""
+    from pipeline.extract import FFmpegError
+    from pipeline.habillage import detecter_zone
+
+    status = _get_status_or_404(job_id)
+    try:
+        return {"zone": detecter_zone(jobs.project_dir(job_id) / status["fichier"])}
+    except FFmpegError as exc:
+        raise HTTPException(500, str(exc)) from None
 
 
 @app.get("/jobs/{job_id}/subtitles")
