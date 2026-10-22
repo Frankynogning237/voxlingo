@@ -113,6 +113,23 @@ ecrire('ops/fmha/attn_bias.py', [
     '    def from_seqlens(*a, **k):',
     '        raise NotImplementedError("plusieurs cartes non prises en charge par cet essai")',
 ])
+# xfuser (calcul réparti sur plusieurs cartes) : importé partout, mais une seule carte calcule ici
+def module(chemin, lignes):
+    os.makedirs(os.path.dirname(f'/kaggle/working/InfiniteTalk/{chemin}'), exist_ok=True)
+    open(f'/kaggle/working/InfiniteTalk/{chemin}', 'w').write(chr(10).join(lignes) + chr(10))
+module('xfuser/__init__.py', [''])
+module('xfuser/core/__init__.py', [''])
+module('xfuser/core/distributed/__init__.py', [
+    'def get_sequence_parallel_rank(): return 0',
+    'def get_sequence_parallel_world_size(): return 1',
+    'def get_sp_group(): raise NotImplementedError("une seule carte dans cet essai")',
+    'def init_distributed_environment(*a, **k): raise NotImplementedError("une seule carte dans cet essai")',
+    'def initialize_model_parallel(*a, **k): raise NotImplementedError("une seule carte dans cet essai")',
+])
+module('xfuser/core/long_ctx_attention/__init__.py', [
+    'class xFuserLongContextAttention:',
+    '    def __init__(self, *a, **k): raise NotImplementedError("une seule carte dans cet essai")',
+])
 cuda = 'cu' + torch.version.cuda.replace('.', '')[:3]
 print('PyTorch', version_torch, cuda)
 with open('/tmp/contraintes.txt', 'w') as f:
@@ -134,6 +151,8 @@ for f in _g.glob('/kaggle/working/InfiniteTalk/wan/**/*.py', recursive=True):  #
 # Encodeur de texte (compressé fp8) : le seul fourni, quel que soit le mode
 remplacer('wan/modules/t5.py', 'f"t5_{quant}.safetensors"', '"t5_fp8.safetensors"', 2)
 remplacer('wan/modules/t5.py', 'f"t5_map_{quant}.json"', '"t5_map_fp8.json"', 1)
+# Synthèse vocale intégrée (kokoro, pour le mode « texte → voix ») : inutile ici, et ses dépendances manquent
+remplacer('generate_infinitetalk.py', 'from kokoro import KPipeline', 'KPipeline = None  # synthèse vocale inutile ici')
 # Encodeurs de texte et d'image sur la deuxième carte : la première reste au modèle principal
 remplacer('wan/multitalk.py', 'self.text_encoder.model.to(self.device)', 'self.text_encoder.model.to("cuda:1")')
 # … dès son chargement et pour toute la séance : la mémoire vive (29 Go) reste au modèle principal (19,5 Go)
