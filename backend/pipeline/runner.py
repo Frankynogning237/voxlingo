@@ -16,7 +16,7 @@ import jobs
 import sauvegarde
 from pipeline.extract import compute_peaks, extract_audio, make_filmstrip, make_thumbnail, probe_duration
 from pipeline.transcribe import transcribe
-from pipeline.adjust import ajuster_segments
+from pipeline.adjust import a_ajuster, ajuster_segments
 from pipeline.segments import est_trop_long, marquer_fin_max
 from pipeline.translate import translate_segments
 
@@ -172,7 +172,8 @@ def _do_translate(job_id: str, report: Callable[[float], None], ids: set[int] | 
 
 
 def _traduire(job_id: str, report: Callable[[float], None], ids: set[int] | None = None) -> None:
-    """Traduit les segments (tous, ou seulement `ids`), puis ajuste les phrases trop longues si l'option est active."""
+    """Traduit les segments (tous, ou seulement `ids`), puis ajuste la durée des phrases si l'option est active
+    (trop longues, longues à caler sur les pauses d'origine, trop courtes)."""
     status = jobs.read_status(job_id)
     source, cible = status["langue_source"], status["langue_cible"]
     ajuster = status.get("options", {}).get("ajuster_trop_longs", True)
@@ -191,13 +192,14 @@ def _traduire(job_id: str, report: Callable[[float], None], ids: set[int] | None
         seg["traduction_ia"] = texte
         seg["traduction"] = texte
         seg["a_retraduire"] = False
+        seg.pop("allongement_essaye", None)
         seg["trop_long"] = est_trop_long(seg, texte, source, cible, jobs.strategie(status))
     data["langue_cible"] = cible
     data["moteur_traduction"] = moteur
     jobs.write_segments(job_id, data)
 
     bilan = None
-    if ajuster and any(seg["trop_long"] for seg in data["segments"]):
+    if ajuster and a_ajuster(data["segments"], source, cible, jobs.strategie(status)):
         bilan = ajuster_segments(data, source, cible, on_progress=_sous_progression(report, fin_traduction, 1),
                                  strategie=jobs.strategie(status))
         jobs.write_segments(job_id, data)
@@ -216,9 +218,10 @@ def _retraduire_selection(job_id: str, data: dict, ids: set[int], source: str, c
         if seg["id"] in nouvelles:
             seg["traduction_ia"] = seg["traduction"] = nouvelles[seg["id"]]
             seg["a_retraduire"] = False
+            seg.pop("allongement_essaye", None)
             seg["trop_long"] = est_trop_long(seg, seg["traduction"], source, cible, jobs.strategie(status))
     jobs.write_segments(job_id, data)
-    if ajuster and any(seg["trop_long"] for seg in data["segments"] if seg["id"] in nouvelles):
+    if ajuster and a_ajuster(data["segments"], source, cible, jobs.strategie(status), ids=set(nouvelles)):
         bilan = ajuster_segments(data, source, cible, ids=set(nouvelles), strategie=jobs.strategie(status),
                                  on_progress=_sous_progression(report, 0.8, 1.0))
         jobs.write_segments(job_id, data)
@@ -232,7 +235,7 @@ def _do_adjust(job_id: str, ids: set[int] | None, report: Callable[[float], None
 
 
 def _ajuster(job_id: str, ids: set[int] | None, report: Callable[[float], None]) -> None:
-    """Ajuste les phrases trop longues après les modifications de l'utilisateur."""
+    """Ajuste la durée des phrases (demande de l'utilisateur depuis l'éditeur)."""
     status = jobs.read_status(job_id)
     data = jobs.read_segments(job_id)
     data["duree_s"] = status.get("duree_s") or data.get("duree_s")

@@ -73,6 +73,10 @@ export type BilanAjustement = {
   silence: number
   raccourcies: number
   decoupees: number
+  /** Phrases longues calées morceau par morceau sur les pauses d'origine */
+  calees?: number
+  /** Traductions trop courtes reformulées un peu plus longuement */
+  allongees?: number
   a_revoir: number
 }
 
@@ -214,7 +218,9 @@ export type Segment = {
   traduction_ia?: string
   trop_long?: boolean
   fin_max?: number
-  ajustement?: 'raccourcie' | 'decoupee' | 'a_revoir'
+  ajustement?: 'raccourcie' | 'decoupee' | 'calee' | 'allongee' | 'a_revoir'
+  /** Ajustement de durée utile à cette phrase (elle tient dans son temps, mais ne colle pas à la scène) */
+  duree_a_ajuster?: 'caler' | 'allonger' | null
   duree_doublage?: number
   facteur_voix?: number
   locuteur?: string

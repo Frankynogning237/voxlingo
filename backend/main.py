@@ -295,9 +295,14 @@ def get_segments(job_id: str) -> dict:
         marquer_fin_max(data["segments"], status.get("duree_s"))  # projets créés avant l'ajustement
     from pipeline.voice import fichier_brut
 
+    from pipeline.segments import besoin_ajustement
+
     dossier_voix = jobs.project_dir(job_id) / "voix"
+    cible = status.get("langue_cible")
     for seg in data["segments"]:
         seg["voix_disponible"] = fichier_brut(dossier_voix, seg["id"]).is_file()
+        retouchee = seg.get("traduction") != seg.get("traduction_ia", seg.get("traduction"))
+        seg["duree_a_ajuster"] = None if retouchee else besoin_ajustement(seg, cible)
     return data
 
 
@@ -370,6 +375,8 @@ def save_translations(job_id: str, edition: EditionTraductions) -> dict:
         if seg["id"] in par_id:
             if not par_id[seg["id"]]:
                 raise HTTPException(400, f"La traduction du segment {seg['id'] + 1} est vide.")
+            if seg.get("traduction") != par_id[seg["id"]]:
+                seg.pop("allongement_essaye", None)
             seg["traduction"] = par_id[seg["id"]]
             correction = textes.get(seg["id"])
             if correction and correction != seg["texte"]:

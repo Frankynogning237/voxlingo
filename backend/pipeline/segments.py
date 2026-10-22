@@ -25,6 +25,9 @@ VITESSE_XTTS_MAX = 1.35
 DUREE_MIN_MORCEAU_S = 1.0
 DUREE_CIBLE_MORCEAU_S = 2.5
 PAUSE_MIN_S = 0.25
+# Pause longue : le personnage se tait vraiment ; on y coupe toujours, même pour un morceau d'un seul mot,
+# sinon la voix doublée enchaînerait sans marquer ce silence et serait décalée pour tout le reste de la phrase
+PAUSE_LONGUE_S = 0.7
 PONCTUATION_COUPURE = re.compile(r"[,;:.!?…，、。！？]$")
 
 
@@ -59,6 +62,44 @@ STRATEGIE_PAR_DEFAUT = "reformuler"
 TOLERANCE_REFORMULER = 1.08  # accélération imperceptible acceptée en mode « reformuler »
 
 
+# Phrases longues : calées morceau par morceau sur les pauses de la voix d'origine, pour que la voix
+# doublée reparte avec le personnage après chaque pause au lieu de dériver sur toute la scène
+DUREE_LONGUE_S = 6.0
+# Traductions trop courtes : même ralentie au maximum (×0,85), la voix laisserait le personnage parler
+# sans voix à la fin de la phrase ; l'IA en propose alors une version un peu plus développée
+DUREE_MIN_ALLONGER_S = 1.5
+REMPLISSAGE_MIN = 0.8  # en dessous de 80 % de la durée d'origine (au débit naturel), la phrase est allongée
+REMPLISSAGE_CIBLE = 0.95
+
+
+def syllabes_pour_duree(duree_s: float, cible: str | None) -> int:
+    """Nombre de syllabes que la voix doublée prononce en `duree_s` secondes, à son débit naturel."""
+    return max(1, round(duree_s * debit(cible) * FACTEUR_DEBIT_XTTS))
+
+
+def est_trop_court(seg: dict[str, Any], traduction: str, cible: str | None) -> bool:
+    """La voix doublée, au débit naturel, laisserait une bonne partie de la phrase d'origine sans voix."""
+    originale = seg["fin"] - seg["debut"]
+    return originale >= DUREE_MIN_ALLONGER_S and duree_voix_estimee(traduction, cible) < REMPLISSAGE_MIN * originale
+
+
+def a_caler(seg: dict[str, Any]) -> bool:
+    """Phrase longue qui peut être découpée aux pauses de la voix d'origine."""
+    return seg["fin"] - seg["debut"] >= DUREE_LONGUE_S and len(decouper(seg)) > 1
+
+
+def besoin_ajustement(seg: dict[str, Any], cible: str | None) -> str | None:
+    """Ajustement de durée utile à une phrase qui tient dans son temps : « caler » (phrase longue à
+    découper aux pauses d'origine), « allonger » (traduction trop courte) ou None."""
+    if not seg.get("traduction"):
+        return None
+    if a_caler(seg):
+        return "caler"
+    if not seg.get("allongement_essaye") and est_trop_court(seg, seg["traduction"], cible):
+        return "allonger"
+    return None
+
+
 def capacite(strategie: str | None) -> float:
     """Accélération totale acceptée avant de considérer une phrase comme trop longue."""
     if (strategie or STRATEGIE_PAR_DEFAUT) == "accelerer":
@@ -88,7 +129,11 @@ def _texte(mots: list[dict[str, Any]]) -> str:
 
 
 def _points_de_coupure(mots: list[dict[str, Any]]) -> list[int]:
-    """Indices i où l'on peut couper après mots[i] : ponctuation d'abord, sinon pauses marquées."""
+    """Indices i où l'on peut couper après mots[i] : pauses longues d'abord, puis ponctuation, sinon
+    pauses marquées."""
+    longues = [i for i in range(len(mots) - 1) if mots[i + 1]["debut"] - mots[i]["fin"] >= PAUSE_LONGUE_S]
+    if longues:
+        return longues
     debut, fin = mots[0]["debut"], mots[-1]["fin"]
     valides = [
         i for i in range(len(mots) - 1)

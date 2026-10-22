@@ -388,22 +388,50 @@ SHORTEN_PROMPT = (
 )
 
 
+LENGTHEN_PROMPT = (
+    "You lengthen dubbing translations that are too short for the original timing, so the dubbed voice "
+    "does not stop while the character is still speaking. Rewrite the translation in the same target "
+    "language with fuller, natural spoken phrasing: complete forms instead of contractions, natural "
+    "connectors and light rephrasing. Keep exactly the same meaning and tone, and never add new "
+    "information, names or facts that are not in the original line. "
+    'Answer with strict JSON only: {"translation": "..."}'
+)
+
+
 def raccourcir(client: httpx.Client, modele: str, original: str, traduction: str,
                source: str, cible: str, syllabes_max: int) -> str:
     """Demande au modèle une version plus courte de la traduction (au plus `syllabes_max` syllabes)."""
-    prompt = "\n".join(_avec_consignes([
+    return _reformuler(client, modele, SHORTEN_PROMPT, [
         f"Source language: {LANGUAGE_NAMES.get(source, source)}",
         f"Target language: {LANGUAGE_NAMES.get(cible, cible)}",
         f'Original line: "{original}"',
         f'Current translation (too long): "{traduction}"',
         f"Maximum length: {syllabes_max} syllables.",
-    ]))
+    ], traduction, "le raccourcissement")
+
+
+def allonger(client: httpx.Client, modele: str, original: str, traduction: str,
+             source: str, cible: str, syllabes_min: int, syllabes_max: int) -> str:
+    """Demande au modèle une version un peu plus développée de la traduction, de même sens
+    (entre `syllabes_min` et `syllabes_max` syllabes)."""
+    return _reformuler(client, modele, LENGTHEN_PROMPT, [
+        f"Source language: {LANGUAGE_NAMES.get(source, source)}",
+        f"Target language: {LANGUAGE_NAMES.get(cible, cible)}",
+        f'Original line: "{original}"',
+        f'Current translation (too short for the timing): "{traduction}"',
+        f"Target length: between {syllabes_min} and {syllabes_max} syllables.",
+    ], traduction, "l'allongement")
+
+
+def _reformuler(client: httpx.Client, modele: str, systeme: str, lignes: list[str], traduction: str,
+                quoi: str) -> str:
+    prompt = "\n".join(_avec_consignes(lignes))
     reponse = client.post(
         "/api/chat",
         json={
             "model": modele,
             "messages": [
-                {"role": "system", "content": SHORTEN_PROMPT},
+                {"role": "system", "content": systeme},
                 {"role": "user", "content": prompt},
             ],
             "format": {
@@ -421,7 +449,7 @@ def raccourcir(client: httpx.Client, modele: str, original: str, traduction: str
     try:
         texte = json.loads(reponse.json()["message"]["content"])["translation"].strip().strip('"').strip()
     except (json.JSONDecodeError, KeyError, AttributeError) as exc:
-        raise TranslationError("Réponse inattendue du modèle pendant le raccourcissement.") from exc
+        raise TranslationError(f"Réponse inattendue du modèle pendant {quoi}.") from exc
     return texte or traduction
 
 
