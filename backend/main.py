@@ -580,6 +580,20 @@ async def import_lipsync(job_id: str, video: UploadFile = File(...)) -> dict:
     return _rehabiller(job_id, status)
 
 
+@app.post("/jobs/{job_id}/mixage")
+def remix_audio(job_id: str) -> dict:
+    """Refait le mixage du son avec les voix déjà générées : volume et timbre calés sur la voix d'origine,
+    fond sonore complet. Les voix ne sont pas régénérées."""
+    status = _get_status_or_404(job_id)
+    if status["etat"] in ("en_attente", "en_cours"):
+        raise HTTPException(409, "Un traitement est en cours : attendez sa fin.")
+    if not status.get("fichier_sortie") or not (jobs.project_dir(job_id) / "voix").is_dir():
+        raise HTTPException(409, "Générez d'abord les voix du projet.")
+    status = jobs.update_status(job_id, etat="en_attente")
+    jobs.start_remix(job_id)
+    return status
+
+
 @app.post("/jobs/{job_id}/synchroniser")
 def lipsync_engine(job_id: str) -> dict:
     """Synchronise les lèvres avec le moteur lui-même (MuseTalk sur GPU), sans passer par Kaggle à la main."""
@@ -827,9 +841,9 @@ def duplicate_job(job_id: str, demande: Duplication | None = None) -> dict:
 
 CHOIX_TRANSCRIPTION = [
     {"valeur": "auto", "libelle": "Automatique"},
-    {"valeur": "small", "libelle": "Whisper Small (rapide)"},
+    {"valeur": "small", "libelle": "Whisper Small (rapide, moins précis)"},
     {"valeur": "medium", "libelle": "Whisper Medium"},
-    {"valeur": "large-v3-turbo", "libelle": "Whisper Large V3 Turbo"},
+    {"valeur": "large-v3-turbo", "libelle": "Whisper Large V3 Turbo (précis, conseillé)"},
 ]
 CHOIX_TRADUCTION = [
     {"valeur": "auto", "libelle": "Automatique"},

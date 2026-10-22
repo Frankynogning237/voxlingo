@@ -696,6 +696,42 @@ def _ajouter_intonation(job_id: str, status: dict, data: dict, par_locuteur: dic
     logger.info("[%s] Intonation d'origine pour %d phrase(s)", job_id, n)
 
 
+def _egalisation_sure(phrases: list[dict], filtre: str, dossier, reference) -> bool:
+    """La voix égalisée ressemble-t-elle au moins autant au locuteur que la voix brute ? (empreinte vocale,
+    sur ses phrases les plus longues). Sans le modèle d'empreinte, l'égalisation est gardée."""
+    import subprocess
+    import tempfile
+    from pathlib import Path
+
+    import numpy as np
+
+    from pipeline.extract import _require
+    from pipeline.ressemblance import _lire, modele_empreinte, ressemblance_fichier
+    from pipeline.voice import fichier_brut
+
+    longues = sorted((s for s in phrases if fichier_brut(dossier, s["id"]).is_file()),
+                     key=lambda s: s["fin"] - s["debut"], reverse=True)[:4]
+    if not longues or not Path(reference).is_file():
+        return True
+    with modele_empreinte() as empreinte, tempfile.TemporaryDirectory(prefix="voxlingo-timbre-") as temp:
+        if empreinte is None:
+            return True
+        cible = empreinte(_lire(Path(reference)))
+        if cible is None:
+            return True
+        brutes, egalisees = [], []
+        for s in longues:
+            brut = fichier_brut(dossier, s["id"])
+            egalise = Path(temp) / brut.name
+            subprocess.run([_require("ffmpeg"), "-y", "-v", "error", "-i", str(brut), "-af", filtre, str(egalise)],
+                           capture_output=True)
+            a, b = ressemblance_fichier(brut, cible, empreinte), ressemblance_fichier(egalise, cible, empreinte)
+            if a is not None and b is not None:
+                brutes.append(a)
+                egalisees.append(b)
+    return not brutes or float(np.median(egalisees)) >= float(np.median(brutes)) - 0.01
+
+
 def _do_export(job_id: str, report: Callable[[float], None]) -> None:
     """Cale chaque voix sur son temps, construit la piste doublée et exporte vidéo et sous-titres."""
     from pipeline.align import caler
@@ -711,10 +747,9 @@ def _do_export(job_id: str, report: Callable[[float], None]) -> None:
     duree = status.get("duree_s") or data.get("duree_s")
     marquer_fin_max(data["segments"], duree)
 
-    # Fidélité à la voix d'origine : volume au décibel près ; égalisation du timbre seulement sur demande
-    # (EGALISATION_TIMBRE=true) : le clonage reproduit déjà le timbre de l'échantillon, et corriger encore
-    # vers la piste « voix isolée » (réverbération, résidus de musique, aigus atténués par la séparation)
-    # recolorait les voix au point de ne plus ressembler aux locuteurs d'origine.
+    # Fidélité à la voix d'origine : volume au décibel près, et timbre rapproché de la voix d'origine du
+    # locuteur (pipeline/timbre_eq.py : mesuré de 100 Hz à 6,3 kHz, là où la voix isolée est fidèle) ; la
+    # correction n'est gardée que si la voix ressemble au moins autant au locuteur (_egalisation_sure).
     from config import get_settings
     from pipeline.niveau import lire_extrait, niveau_actif_db
     from pipeline.timbre_eq import correction_locuteur, filtre_ffmpeg
@@ -722,17 +757,29 @@ def _do_export(job_id: str, report: Callable[[float], None]) -> None:
 
     voix_isolee = folder / "voix_isolee.wav"
     egaliseurs: dict[str, str | None] = {}
+
+    def reference_du_locuteur(code: str):
+        """Échantillon de clonage actuel, ou celui d'une version précédente (voix pas encore refaites)."""
+        actuel = fichier_reference(dossier, code)
+        # « reference_v3_X.wav » passe avant « reference_X.wav » (première version, sans numéro)
+        return actuel if actuel.is_file() else max(dossier.glob(f"reference*_{code}.wav"), default=None)
+
     if voix_isolee.is_file() and get_settings().egalisation_timbre:
         for code, infos in jobs.locuteurs(data).items():
             phrases = [s for s in data["segments"] if jobs.locuteur(s) == code]
             clone = (infos.get("voix_generee", infos.get("voix")) == "clone"
                      and sum(s["fin"] - s["debut"] for s in phrases) >= REFERENCE_MIN_LOCUTEUR_S
-                     and fichier_reference(dossier, code).is_file())
+                     and reference_du_locuteur(code) is not None)
             if not clone:
                 continue  # voix de la bibliothèque : son timbre est choisi, pas recopié
             gains = correction_locuteur(voix_isolee, phrases, [fichier_brut(dossier, s["id"]) for s in phrases])
-            egaliseurs[code] = filtre_ffmpeg(gains)
-            if gains is not None:
+            filtre = filtre_ffmpeg(gains)
+            if filtre and not _egalisation_sure(phrases, filtre, dossier, reference_du_locuteur(code)):
+                logger.info("[%s] Timbre de %s : correction écartée (la voix ressemblerait moins au locuteur)",
+                            job_id, code)
+                filtre = None
+            egaliseurs[code] = filtre
+            if filtre:
                 logger.info("[%s] Timbre de %s : correction %s dB", job_id, code,
                             " ".join(f"{g:+.0f}" for g in gains))
     report(0.05)
@@ -758,8 +805,16 @@ def _do_export(job_id: str, report: Callable[[float], None]) -> None:
     if options.get("conserver_fond", True):
         from pipeline.separate import separer
 
-        _, fond = separer(folder / status["fichier"], folder)  # projets créés avant la phase 5
-        mixer_fond(folder / "voix_doublee.wav", fond, int(options.get("volume_fond", 100)), folder / "doublage.wav")
+        from pipeline.assemble import residu_hors_parole
+
+        voix_origine, fond = separer(folder / status["fichier"], folder)  # projets créés avant la phase 5
+        # Sons d'origine pris pour de la voix par la séparation (rires, cris, bruitages), rendus au fond
+        # là où personne ne parle
+        residu = residu_hors_parole(voix_origine, [(s["debut"], s["fin"]) for s in data["segments"]],
+                                    folder / "residu_fond.wav")
+        mixer_fond(folder / "voix_doublee.wav", fond, int(options.get("volume_fond", 100)), folder / "doublage.wav",
+                   residu)
+        residu.unlink(missing_ok=True)
     else:
         (folder / "voix_doublee.wav").replace(folder / "doublage.wav")
     report(0.7)
@@ -842,6 +897,28 @@ def _do_lipsync(job_id: str, report: Callable[[float], None]) -> None:
     resultat.unlink(missing_ok=True)
     apercu_navigateur(cible, folder / "apercu_synchro.mp4")
     jobs.update_status(job_id, synchro_importee=True, synchro_moteur=True, synchro_erreur=None)
+
+
+def run_remix(job_id: str) -> None:
+    """Refait le mixage du son avec les voix déjà générées (calage, timbre, volume, fond sonore), sans les
+    régénérer. Une vidéo synchronisée aux lèvres reçoit le nouveau son sans être recalculée."""
+    from pipeline.format import apercu_navigateur, exporter_meme_format
+
+    invalider_habillage(job_id)
+
+    def body() -> None:
+        _run_step(job_id, "export", lambda report: _do_export(job_id, report))
+        status = jobs.read_status(job_id) or {}
+        folder = jobs.project_dir(job_id)
+        synchro = next(folder.glob("doublage_synchro.*"), None) if status.get("synchro_importee") else None
+        if synchro is not None:
+            remise = synchro.with_name(f"synchro_remixee{synchro.suffix}")
+            exporter_meme_format(synchro, folder / "doublage.wav", remise)  # image copiée, nouveau son
+            remise.replace(synchro)
+            apercu_navigateur(synchro, folder / "apercu_synchro.mp4")
+
+    _guarded(job_id, body, etat_final="termine")
+    _habiller_si_termine(job_id)
 
 
 def run_lipsync(job_id: str) -> None:

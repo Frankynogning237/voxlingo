@@ -185,3 +185,33 @@ def test_relecture_refuse_une_correction_trop_longue_ou_vide():
     assert translate.relire(vide, "m", SEGMENTS, traductions, 1, "fr", "de") == traductions[1]
     cassee = FauxClient("pas du JSON")
     assert translate.relire(cassee, "m", SEGMENTS, traductions, 1, "fr", "de") == traductions[1]
+
+
+def test_correction_mesuree_dans_la_plage_fiable_et_prolongee_en_plateau():
+    """Aigus assourdis par la séparation (au-dessus de 6,3 kHz) : pas recopiés, la correction des bords est
+    prolongée en plateau."""
+    origine = np.zeros(len(timbre_eq.BANDES_HZ))
+    generee = np.zeros(len(timbre_eq.BANDES_HZ))
+    origine[-2:] = -20.0  # 8 et 10 kHz : la voix isolée d'origine a perdu ses aigus
+    gains = timbre_eq.correction(origine, generee)
+    assert np.allclose(gains, 0.0)  # rien à corriger dans la plage fiable : les aigus ne sont pas ternis
+    for f in (160, 200, 250):  # voix générée trop chargée de 160 à 250 Hz (mesuré sur une vraie vidéo)
+        generee[timbre_eq.BANDES_HZ.index(f)] = 8.0
+    gains = timbre_eq.correction(origine, generee)
+    assert gains[timbre_eq.BANDES_HZ.index(200)] < -5  # corrigée de près, au-delà de l'ancien plafond de 3 dB
+    assert gains[0] == gains[1] and gains[-1] == gains[-3]  # plateaux hors de la plage fiable
+
+
+def test_residu_de_fond_coupe_pendant_la_parole(tmp_path):
+    """Sons pris pour de la voix (rires, bruitages) : rendus au fond hors parole, jamais sous la voix doublée."""
+    from pipeline.assemble import residu_hors_parole
+
+    taux = 44100
+    signal = np.full((taux * 6, 2), 0.1, np.float32)
+    sf.write(tmp_path / "voix_isolee.wav", signal, taux)
+    residu = residu_hors_parole(tmp_path / "voix_isolee.wav", [(2.0, 3.0)], tmp_path / "residu.wav")
+    sortie, _ = sf.read(residu, dtype="float32")
+    assert sortie.shape == signal.shape
+    assert np.allclose(sortie[: int(1.6 * taux)], 0.1, atol=1e-3)  # loin de la phrase : intact
+    assert np.allclose(sortie[int(1.8 * taux): int(3.2 * taux)], 0.0, atol=1e-4)  # phrase ± marge : coupé
+    assert np.allclose(sortie[int(3.4 * taux):], 0.1, atol=1e-3)

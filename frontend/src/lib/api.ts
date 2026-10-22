@@ -540,6 +540,8 @@ export async function importLipsync(id: string, video: File): Promise<Job> {
 export const removeLipsync = (id: string) => send<Job>(`/jobs/${id}/synchro`, 'DELETE')
 /** Synchronisation labiale par le moteur lui-même (GPU Kaggle/Colab, MuseTalk). */
 export const lipsyncEngine = (id: string) => send<Job>(`/jobs/${id}/synchroniser`, 'POST')
+/** Refait le mixage du son (volume et timbre calés sur la voix d'origine, fond complet) sans régénérer les voix. */
+export const remixAudio = (id: string) => send<Job>(`/jobs/${id}/mixage`, 'POST')
 
 // ───────────────────────── Habillage de la vidéo exportée ─────────────────────────
 

@@ -7,6 +7,8 @@ avant les étapes suivantes. Le minutage de chaque mot est conservé : il sert
 Pour une transcription fidèle :
   - la langue est détectée sur plusieurs passages parlés de la vidéo, pas seulement sur ses
     30 premières secondes (générique, musique, réplique dans une autre langue) ;
+  - une courte phrase d'exemple ponctuée, dans la langue de la vidéo, amène Whisper à ponctuer :
+    les phrases sont mieux délimitées, donc mieux traduites et mieux calées ;
   - les termes du glossaire du projet (noms propres, marques…) sont signalés à Whisper ;
   - les « hallucinations » de Whisper sont écartées : phrases inventées sur du silence ou de la
     musique (« Sous-titres réalisés par… », « Merci d'avoir regardé »), boucles de répétition.
@@ -59,9 +61,10 @@ DEPOTS = {
 }
 
 # Exemple ponctué dans la langue de la vidéo (court : Whisper le prend comme texte précédent, pas comme
-# consigne), pour inciter à ponctuer. Désactivé tant que son effet n'est pas mesuré : sur une vidéo d'essai,
-# il a ralenti la transcription de 59 à 165 s avec le modèle « small ».
-INVITE_PONCTUATION = False
+# consigne), pour inciter à ponctuer. Mesuré sur une vidéo de 89 s parlée vite et sans pauses : sans lui,
+# de longues suites sans ponctuation (« y a quoi leo me trompe avec nisqa qu'est ce que tu veux… ») ; avec
+# lui, des phrases ponctuées et bien délimitées (« Léo me trompe avec Niska. »), pour ~30 % de temps en plus.
+INVITE_PONCTUATION = True
 INVITES = {
     "fr": "Bonjour. Alors, qu'est-ce que tu veux ? D'accord, c'est terminé !",
     "en": "Hello. So, what do you want? Okay, it's over!",
@@ -92,11 +95,26 @@ def charger_modele(nom: str, device: str, compute_type: str):
     erreur: Exception | None = None
     for depot in DEPOTS.get(nom, [nom]):
         try:
-            return WhisperModel(depot, device=device, compute_type=compute_type, download_root=racine)
+            return _reglages_audio_coherents(
+                WhisperModel(depot, device=device, compute_type=compute_type, download_root=racine))
         except Exception as exc:  # noqa: BLE001 — dépôt déplacé ou injoignable : on essaie le suivant
             logger.warning("Modèle Whisper %s indisponible (%s)", depot, exc)
             erreur = exc
     raise RuntimeError(f"Impossible de charger le modèle de transcription {nom} : {erreur}")
+
+
+def _reglages_audio_coherents(modele):
+    """Si `preprocessor_config.json` manque (téléchargement interrompu), faster-whisper calcule 80 bandes de
+    fréquences au lieu des 128 qu'attendent large-v3 et turbo, et la transcription échoue : on recale
+    l'analyse du son sur ce que le modèle attend."""
+    from faster_whisper.feature_extractor import FeatureExtractor
+
+    attendues = getattr(modele.model, "n_mels", None)
+    if attendues and modele.feature_extractor.mel_filters.shape[0] != attendues:
+        logger.warning("Réglages audio du modèle Whisper incomplets : %d bandes de fréquences rétablies", attendues)
+        modele.feat_kwargs = {**getattr(modele, "feat_kwargs", {}), "feature_size": attendues}
+        modele.feature_extractor = FeatureExtractor(**modele.feat_kwargs)
+    return modele
 
 
 def fusionner_fragments(segments: list[Segment]) -> list[Segment]:

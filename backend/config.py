@@ -80,9 +80,9 @@ class Settings(BaseSettings):
     hf_token: str | None = None
     # Relecture du dialogue traduit (cohérence, accords, naturel) : plus fine, ≈ 1,5 fois plus longue
     relecture_traduction: bool = True
-    # Égalisation du timbre des voix clonées vers la piste voix isolée (désactivée : le clonage
-    # reproduit déjà le timbre, la double correction déformait les voix)
-    egalisation_timbre: bool = False
+    # Égalisation du timbre des voix clonées vers la voix d'origine (pipeline/timbre_eq.py) : mesurée de
+    # 100 Hz à 6,3 kHz et gardée seulement si la voix ressemble au moins autant au locuteur
+    egalisation_timbre: bool = True
     # Sauvegarde automatique sur Hugging Face (moteur sur Kaggle/Colab) : jeton avec droit
     # d'écriture et dépôt dataset privé (par défaut « votre-compte/voxlingo-sauvegarde »)
     hf_token_ecriture: str | None = None
@@ -121,9 +121,10 @@ class Runtime:
         self.mode: Mode = detect_mode(self.device, self.vram_go)
 
         # Modèles adaptés au mode (surchargeables dans .env)
-        self.whisper_model = settings.whisper_model or (
-            "large-v3-turbo" if self.device == "cuda" else "small"
-        )
+        # Large V3 Turbo partout : sur processeur, il transcrit ~1,7 fois plus lentement que Small, mais
+        # sans ses contresens (« me filer à ton plan » au lieu de « me fier à ton clan »), et tout le
+        # doublage part de cette transcription
+        self.whisper_model = settings.whisper_model or "large-v3-turbo"
         self.whisper_compute_type = "float16" if self.device == "cuda" else "int8"
         self.ollama_model = settings.ollama_model or (
             "qwen2.5:7b" if self.mode == "gpu_local" else "qwen2.5:3b"

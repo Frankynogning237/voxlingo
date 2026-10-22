@@ -96,3 +96,16 @@ def test_ecoute_refait_les_phrases_infideles_et_garde_la_meilleure(tmp_path, mon
     assert sf.read(tmp_path / "brut_00001.wav")[0].max() == pytest.approx(0.5, abs=1e-3)  # reprise gardée
     assert sf.read(tmp_path / "brut_00002.wav")[0].max() < 0.01  # originale remise (plus fidèle)
     assert not list(tmp_path.glob("avant_ecoute_*"))
+
+
+def test_reglages_audio_rétablis_si_preprocessor_manquant():
+    """Téléchargement interrompu (preprocessor_config.json absent) : 80 bandes au lieu de 128 → recalées."""
+    from types import SimpleNamespace
+
+    from faster_whisper.feature_extractor import FeatureExtractor
+
+    from pipeline.transcribe import _reglages_audio_coherents
+
+    modele = SimpleNamespace(model=SimpleNamespace(n_mels=128), feature_extractor=FeatureExtractor(feature_size=80),
+                             feat_kwargs={"feature_size": 80})
+    assert _reglages_audio_coherents(modele).feature_extractor.mel_filters.shape[0] == 128

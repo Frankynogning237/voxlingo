@@ -253,6 +253,13 @@ def start_analysis(job_id: str) -> None:
     threading.Thread(target=run_analysis, args=(job_id,), name=f"analyse-{job_id}", daemon=True).start()
 
 
+def start_remix(job_id: str) -> None:
+    """Refait le mixage du son (voix existantes) dans un thread en arrière-plan."""
+    from pipeline.runner import run_remix
+
+    threading.Thread(target=run_remix, args=(job_id,), name=f"mixage-{job_id}", daemon=True).start()
+
+
 def start_lipsync(job_id: str) -> None:
     """Lance la synchronisation labiale par le moteur dans un thread en arrière-plan."""
     from pipeline.runner import run_lipsync
