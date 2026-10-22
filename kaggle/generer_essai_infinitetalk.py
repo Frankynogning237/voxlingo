@@ -92,17 +92,31 @@ code(r"""
 !rm -rf InfiniteTalk && git clone -q --depth 1 https://github.com/MeiGen-AI/InfiniteTalk
 import torch, re
 version_torch = torch.__version__.split('+')[0]
-# xformers compilé pour la version de PyTorch déjà installée
-XFORMERS = {'2.4.1': '0.0.28.post1', '2.5.0': '0.0.28.post2', '2.5.1': '0.0.28.post3', '2.6.0': '0.0.29.post3',
-            '2.7.0': '0.0.30', '2.7.1': '0.0.31', '2.8.0': '0.0.32.post2'}
+# xformers : InfiniteTalk (une personne, une carte) n'en utilise que memory_efficient_attention sans masque ;
+# l'attention de PyTorch fait le même calcul. Un petit module de remplacement évite de compiler xformers (plus
+# d'une heure quand aucune version toute prête n'existe pour ce PyTorch).
+os.makedirs('/kaggle/working/InfiniteTalk/xformers/ops/fmha', exist_ok=True)
+def ecrire(chemin, lignes):
+    open(f'/kaggle/working/InfiniteTalk/xformers/{chemin}', 'w').write(chr(10).join(lignes) + chr(10))
+ecrire('__init__.py', [''])
+ecrire('ops/__init__.py', [
+    'import torch.nn.functional as F',
+    'from . import fmha',
+    'def memory_efficient_attention(q, k, v, attn_bias=None, op=None, **_):',
+    '    assert attn_bias is None, "masque non pris en charge (plusieurs cartes ou plusieurs personnes)"',
+    '    return F.scaled_dot_product_attention(q.transpose(1, 2), k.transpose(1, 2), v.transpose(1, 2)).transpose(1, 2)',
+])
+ecrire('ops/fmha/__init__.py', ['from . import attn_bias'])
+ecrire('ops/fmha/attn_bias.py', [
+    'class BlockDiagonalMask:',
+    '    @staticmethod',
+    '    def from_seqlens(*a, **k):',
+    '        raise NotImplementedError("plusieurs cartes non prises en charge par cet essai")',
+])
 cuda = 'cu' + torch.version.cuda.replace('.', '')[:3]
 print('PyTorch', version_torch, cuda)
 with open('/tmp/contraintes.txt', 'w') as f:
-    f.write(f'torch=={version_torch}\n')
-if version_torch in XFORMERS:
-    !pip install -q xformers=={XFORMERS[version_torch]} --index-url https://download.pytorch.org/whl/{cuda}
-else:
-    !pip install -q xformers -c /tmp/contraintes.txt
+    f.write(f'torch=={version_torch}' + chr(10))
 !grep -v -E "^(xfuser|gradio|dashscope)" InfiniteTalk/requirements.txt > /tmp/requirements.txt
 !pip install -q -c /tmp/contraintes.txt -r /tmp/requirements.txt librosa "huggingface_hub[hf_transfer]"
 
