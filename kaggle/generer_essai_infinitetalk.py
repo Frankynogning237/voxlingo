@@ -163,7 +163,7 @@ cuda = 'cu' + torch.version.cuda.replace('.', '')[:3]
 print('PyTorch', version_torch, cuda)
 with open('/tmp/contraintes.txt', 'w') as f:
     f.write(f'torch=={version_torch}' + chr(10))
-!grep -v -E "^(xfuser|gradio|dashscope|decord)" InfiniteTalk/requirements.txt > /tmp/requirements.txt
+!grep -v -E "^(xfuser|gradio|dashscope|decord|numpy)" InfiniteTalk/requirements.txt > /tmp/requirements.txt
 # transformers 4.51 : la version de l'époque d'InfiniteTalk (la 5.x de Kaggle refuse certains réglages du modèle)
 !pip install -q -c /tmp/contraintes.txt -r /tmp/requirements.txt librosa "huggingface_hub[hf_transfer]" "transformers==4.51.3"
 
@@ -233,6 +233,9 @@ quant = 'int8' if MODE == 'rapide' else 'fp8'
 reglages = ('--sample_steps 8 --sample_text_guide_scale 1 --sample_audio_guide_scale 2 --sample_shift 2'
             if MODE == 'rapide' else '--sample_steps 40 --use_teacache')
 os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
+# jax et TensorFlow, préinstallés sur Kaggle, ne servent pas ici : transformers et diffusers ne les chargent pas
+os.environ['USE_FLAX'] = '0'
+os.environ['USE_TF'] = '0'
 %cd /kaggle/working/InfiniteTalk
 debut = time.time()
 !python generate_infinitetalk.py --ckpt_dir {POIDS}/Wan2.1-I2V-14B-480P --wav2vec_dir {POIDS}/chinese-wav2vec2-base \
