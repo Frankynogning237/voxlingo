@@ -205,6 +205,25 @@ remplacer('wan/multitalk.py', "            requantize(self.model, model_state_di
           "            requantize(self.model, model_state_dict, quantization_map, device='cpu')" + chr(10) +
           "            import voxlingo_t4; voxlingo_t4.float16_en_sortie(self.model)")
 remplacer('wan/modules/t5.py', "x = torch.einsum('bnij,bjnc->binc', attn, v)", "x = torch.einsum('bnij,bjnc->binc', attn.to(v.dtype), v)")
+# flash-attention n'existe pas sur T4 : l'encodeur d'image (CLIP) l'exige ; même calcul par l'attention de PyTorch
+with open('/kaggle/working/InfiniteTalk/wan/modules/attention.py', 'a', encoding='utf-8') as f:
+    f.write(chr(10).join([
+        '',
+        'def flash_attention(q, k, v, q_lens=None, k_lens=None, dropout_p=0., softmax_scale=None, q_scale=None,',
+        '                    causal=False, window_size=(-1, -1), deterministic=False, dtype=torch.float16, version=None):',
+        '    # Remplacement T4 : attention de PyTorch (entrées [B, L, N, C])',
+        '    sortie = q.dtype',
+        '    if q_scale is not None:',
+        '        q = q * q_scale',
+        '    masque = None',
+        '    if k_lens is not None:',
+        '        masque = (torch.arange(k.size(1), device=k.device)[None, :] < k_lens.to(k.device)[:, None])[:, None, None, :]',
+        '    x = torch.nn.functional.scaled_dot_product_attention(',
+        '        q.transpose(1, 2).to(torch.float16), k.transpose(1, 2).to(torch.float16), v.transpose(1, 2).to(torch.float16),',
+        '        attn_mask=masque, dropout_p=dropout_p, is_causal=causal and masque is None, scale=softmax_scale)',
+        '    return x.transpose(1, 2).contiguous().to(sortie)',
+        '',
+    ]))
 # Encodeur de voix : réglage forcé jamais utilisé ensuite, que les versions récentes de transformers refusent
 remplacer('src/audio_analysis/wav2vec2.py', '        self.config.output_attentions = True', '        pass')
 # Encodeurs de texte et d'image sur la deuxième carte : la première reste au modèle principal
