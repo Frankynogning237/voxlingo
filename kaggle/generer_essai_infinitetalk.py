@@ -187,12 +187,23 @@ remplacer('generate_infinitetalk.py', 'from kokoro import KPipeline', 'KPipeline
 remplacer('wan/multitalk.py', 'from inspect import ArgSpec', '')
 # Modèles compressés : leurs poids sont restitués en bfloat16 ; tout passe en float16 (T4), et l'attention de
 # l'encodeur de texte aligne ses précisions (scores en float32, valeurs en float16)
+# Les poids compressés ne peuvent pas changer de type : ce sont les résultats de leurs couches qui sont convertis
+module('voxlingo_t4.py', [
+    'import torch',
+    'def _float16(module, entrees, sortie):',
+    '    return sortie.to(torch.float16) if torch.is_tensor(sortie) and sortie.dtype == torch.bfloat16 else sortie',
+    'def float16_en_sortie(modele):',
+    '    for m in modele.modules():',
+    '        if type(m).__name__.startswith(("QLinear", "QConv", "QLayerNorm")):',
+    '            m.register_forward_hook(_float16)',
+    '    return modele',
+])
 remplacer('wan/modules/t5.py', "            requantize(model, model_state_dict, quantization_map, device='cpu')",
           "            requantize(model, model_state_dict, quantization_map, device='cpu')" + chr(10) +
-          "            model = model.to(torch.float16)")
+          "            import voxlingo_t4; voxlingo_t4.float16_en_sortie(model)")
 remplacer('wan/multitalk.py', "            requantize(self.model, model_state_dict, quantization_map, device='cpu')",
           "            requantize(self.model, model_state_dict, quantization_map, device='cpu')" + chr(10) +
-          "            self.model.to(torch.float16)")
+          "            import voxlingo_t4; voxlingo_t4.float16_en_sortie(self.model)")
 remplacer('wan/modules/t5.py', "x = torch.einsum('bnij,bjnc->binc', attn, v)", "x = torch.einsum('bnij,bjnc->binc', attn.to(v.dtype), v)")
 # Encodeur de voix : réglage forcé jamais utilisé ensuite, que les versions récentes de transformers refusent
 remplacer('src/audio_analysis/wav2vec2.py', '        self.config.output_attentions = True', '        pass')
