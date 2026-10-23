@@ -164,7 +164,8 @@ print('PyTorch', version_torch, cuda)
 with open('/tmp/contraintes.txt', 'w') as f:
     f.write(f'torch=={version_torch}' + chr(10))
 !grep -v -E "^(xfuser|gradio|dashscope|decord)" InfiniteTalk/requirements.txt > /tmp/requirements.txt
-!pip install -q -c /tmp/contraintes.txt -r /tmp/requirements.txt librosa "huggingface_hub[hf_transfer]"
+# transformers 4.51 : la version de l'époque d'InfiniteTalk (la 5.x de Kaggle refuse certains réglages du modèle)
+!pip install -q -c /tmp/contraintes.txt -r /tmp/requirements.txt librosa "huggingface_hub[hf_transfer]" "transformers==4.51.3"
 
 # Adaptations T4 (pas de bfloat16 ni de flash-attention ; deux cartes de 16 Go)
 def remplacer(fichier, avant, apres, compte=1):
@@ -184,6 +185,8 @@ remplacer('wan/modules/t5.py', 'f"t5_map_{quant}.json"', '"t5_map_fp8.json"', 1)
 remplacer('generate_infinitetalk.py', 'from kokoro import KPipeline', 'KPipeline = None  # synthèse vocale inutile ici')
 # Python 3.13 (Kaggle) : inspect.ArgSpec n'existe plus (importé sans être utilisé)
 remplacer('wan/multitalk.py', 'from inspect import ArgSpec', '')
+# Encodeur de voix : réglage forcé jamais utilisé ensuite, que les versions récentes de transformers refusent
+remplacer('src/audio_analysis/wav2vec2.py', '        self.config.output_attentions = True', '        pass')
 # Encodeurs de texte et d'image sur la deuxième carte : la première reste au modèle principal
 remplacer('wan/multitalk.py', 'self.text_encoder.model.to(self.device)', 'self.text_encoder.model.to("cuda:1")')
 # … dès son chargement et pour toute la séance : la mémoire vive (29 Go) reste au modèle principal (19,5 Go)
@@ -253,24 +256,10 @@ if brut:
     !ffmpeg -y -v error -i "{TRAVAIL}/origine.mp4" -i "{brut}" -i "{TRAVAIL}/mixage.wav" -filter_complex "[0:v]scale=-2:480[a];[1:v]scale=-2:480[b];[a][b]hstack=inputs=2[v]" -map "[v]" -map 2:a:0 -c:v libx264 -crf 18 -c:a aac -shortest /kaggle/working/comparaison.mp4
 open('/kaggle/working/rapport.txt', 'w').write('\n'.join(rapport))
 print('\n'.join(rapport))
-# Journal et résultats envoyés sur la branche « essai-infinitetalk-resultats » du dépôt (si GITHUB_TOKEN est
-# attaché au carnet) : on les récupère directement sur le PC, sans passer par Kaggle
-try:
-    from kaggle_secrets import UserSecretsClient
-    jeton = UserSecretsClient().get_secret('GITHUB_TOKEN')
-    envoi = '/kaggle/working/envoi'
-    shutil.rmtree(envoi, ignore_errors=True)
-    os.makedirs(envoi)
-    for nom in ('rapport.txt', 'journal.txt', 'comparaison.mp4', 'recree.mp4'):
-        if os.path.isfile(f'/kaggle/working/{nom}'):
-            shutil.copy(f'/kaggle/working/{nom}', envoi)
-    depot = f'https://x-access-token:{jeton}@github.com/Frankynogning237/voxlingo.git'
-    code = os.system(f'cd {envoi} && git init -q && git add -A && git -c user.name=Kaggle -c user.email=kaggle@voxlingo '
-                     f'commit -q -m "Résultats de l essai InfiniteTalk" && git push -q -f {depot} HEAD:refs/heads/essai-infinitetalk-resultats')
-    del jeton, depot
-    print('Résultats envoyés sur GitHub (branche essai-infinitetalk-resultats)' if code == 0 else 'Envoi sur GitHub impossible')
-except Exception as erreur:
-    print('Envoi sur GitHub impossible :', type(erreur).__name__)
+# Le dossier de travail (clones, paquet) ne doit pas encombrer l'onglet Output : seuls les résultats y restent
+shutil.rmtree('/kaggle/working/voxlingo', ignore_errors=True)
+shutil.rmtree('/kaggle/working/donnees', ignore_errors=True)
+shutil.rmtree('/kaggle/working/InfiniteTalk', ignore_errors=True)
 """)
 
 md("""
