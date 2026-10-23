@@ -185,6 +185,15 @@ remplacer('wan/modules/t5.py', 'f"t5_map_{quant}.json"', '"t5_map_fp8.json"', 1)
 remplacer('generate_infinitetalk.py', 'from kokoro import KPipeline', 'KPipeline = None  # synthèse vocale inutile ici')
 # Python 3.13 (Kaggle) : inspect.ArgSpec n'existe plus (importé sans être utilisé)
 remplacer('wan/multitalk.py', 'from inspect import ArgSpec', '')
+# Modèles compressés : leurs poids sont restitués en bfloat16 ; tout passe en float16 (T4), et l'attention de
+# l'encodeur de texte aligne ses précisions (scores en float32, valeurs en float16)
+remplacer('wan/modules/t5.py', "            requantize(model, model_state_dict, quantization_map, device='cpu')",
+          "            requantize(model, model_state_dict, quantization_map, device='cpu')" + chr(10) +
+          "            model = model.to(torch.float16)")
+remplacer('wan/multitalk.py', "            requantize(self.model, model_state_dict, quantization_map, device='cpu')",
+          "            requantize(self.model, model_state_dict, quantization_map, device='cpu')" + chr(10) +
+          "            self.model.to(torch.float16)")
+remplacer('wan/modules/t5.py', "x = torch.einsum('bnij,bjnc->binc', attn, v)", "x = torch.einsum('bnij,bjnc->binc', attn.to(v.dtype), v)")
 # Encodeur de voix : réglage forcé jamais utilisé ensuite, que les versions récentes de transformers refusent
 remplacer('src/audio_analysis/wav2vec2.py', '        self.config.output_attentions = True', '        pass')
 # Encodeurs de texte et d'image sur la deuxième carte : la première reste au modèle principal
