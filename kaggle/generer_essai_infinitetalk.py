@@ -235,7 +235,7 @@ remplacer('wan/multitalk.py', 'self.text_encoder.model.cpu()', 'pass  # encodeur
 remplacer('wan/multitalk.py', 'self.clip.model.cpu()', 'pass  # encodeur gardé sur la deuxième carte')
 remplacer('wan/multitalk.py', 'context, context_null = self.text_encoder([input_prompt, n_prompt], self.device)',
           'context, context_null = self.text_encoder([input_prompt, n_prompt], torch.device("cuda:1"))\n'
-          '            context = [t.to(self.device) for t in context]; context_null = [t.to(self.device) for t in context_null]')
+          '            _sur = lambda c: c.to(self.device) if torch.is_tensor(c) else [t.to(self.device) for t in c]; context, context_null = _sur(context), _sur(context_null)')
 remplacer('wan/multitalk.py', 'self.clip = CLIPModel(\n            dtype=config.clip_dtype,\n            device=self.device,',
           'self.clip = CLIPModel(\n            dtype=config.clip_dtype,\n            device=torch.device("cuda:1"),')
 remplacer('wan/multitalk.py', 'self.clip.model.to(self.device)', 'self.clip.model.to("cuda:1")')
