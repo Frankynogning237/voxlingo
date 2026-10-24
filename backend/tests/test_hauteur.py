@@ -51,3 +51,17 @@ def test_sans_cible_la_hauteur_est_gardee(tmp_path: Path) -> None:
     sf.write(brut, _voix(220.0), TAUX)
     resultat = caler(brut, tmp_path / "cale.wav", {"id": 0, "debut": 0.0, "fin": 2.0, "fin_max": 2.5})
     assert resultat["hauteur_dt"] == 0.0
+
+
+def test_part_de_la_correction() -> None:
+    # Demi-correction d'un écart de 4 demi-tons : 2 ; d'un écart plafonné (8 → 5) : 2,5 ; trop petite : rien
+    assert hauteur.decalage(200.0, 200 * 2 ** (4 / 12), part=0.5) == pytest.approx(2.0)
+    assert hauteur.decalage(200.0, 200 * 2 ** (8 / 12), part=0.5) == pytest.approx(2.5)
+    assert hauteur.decalage(200.0, 200 * 2 ** (0.8 / 12), part=0.5) == 0.0
+
+
+def test_part_nulle_aucune_transposition(tmp_path: Path) -> None:
+    brut = tmp_path / "brut.wav"
+    sf.write(brut, _voix(220.0), TAUX)
+    seg = {"id": 0, "debut": 0.0, "fin": 2.0, "fin_max": 2.5}
+    assert caler(brut, tmp_path / "cale.wav", seg, hauteur_cible_hz=280.0, hauteur_part=0.0)["hauteur_dt"] == 0.0

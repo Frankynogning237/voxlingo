@@ -63,14 +63,15 @@ def _filtrer(entree: Path, sortie: Path, filtres: list[str], seg: dict[str, Any]
 
 def caler(brut: Path, cale: Path, seg: dict[str, Any], gain_db: float = 0.0, egaliseur: str | None = None,
           niveau_cible_db: float | None = None, origine: Path | None = None,
-          hauteur_cible_hz: float | None = None) -> dict[str, Any]:
+          hauteur_cible_hz: float | None = None, hauteur_part: float = 1.0) -> dict[str, Any]:
     """Écrit la voix calée et renvoie {facteur, duree, trop_long, gain_db}.
 
     Durée (atempo), timbre (`egaliseur`, filtre FFmpeg) et volume. Avec `niveau_cible_db` (niveau de
     la phrase d'origine, pipeline/niveau.py), le volume est calé au décibel près : on mesure la voix
     après durée et timbre, puis on applique l'écart exact. Sinon, `gain_db` (écart relatif) est appliqué.
     `origine` (voix d'origine isolée) situe les pauses du personnage pour le calage morceau par morceau.
-    `hauteur_cible_hz` (voix clonées, pipeline/hauteur.py) : la voix est transposée vers cette hauteur.
+    `hauteur_cible_hz` (voix clonées, pipeline/hauteur.py) : la voix est transposée vers cette hauteur
+    (`hauteur_part` de l'écart, choisie à l'empreinte vocale).
     """
     from pipeline.calage_pauses import caler_sur_pauses
     from pipeline.niveau import gain_pour_egaler, niveau_fichier_db
@@ -80,7 +81,7 @@ def caler(brut: Path, cale: Path, seg: dict[str, Any], gain_db: float = 0.0, ega
     duree = duree_wav(brut)
     facteur, trop_long = facteur_calage(duree, seg)
     filtres = []
-    demi_tons = decalage(hauteur_mediane(brut), hauteur_cible_hz) if hauteur_cible_hz else 0.0
+    demi_tons = decalage(hauteur_mediane(brut), hauteur_cible_hz, hauteur_part) if hauteur_cible_hz and hauteur_part else 0.0
     morceaux = cale.with_name(cale.stem + "_pauses.wav")
     par_pauses = caler_sur_pauses(brut, seg, morceaux, origine)
     if par_pauses is not None:  # durée déjà calée, morceau par morceau

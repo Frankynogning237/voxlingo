@@ -696,6 +696,57 @@ def _ajouter_intonation(job_id: str, status: dict, data: dict, par_locuteur: dic
     logger.info("[%s] Intonation d'origine pour %d phrase(s)", job_id, n)
 
 
+def _part_hauteur(phrases: list[dict], f0_locuteur: float | None, dossier, reference, egaliseur: str | None) -> float:
+    """Part de la correction de hauteur gardée pour un locuteur cloné (pipeline/hauteur.py) : la plus forte qui
+    ne rend pas la voix moins ressemblante au personnage (empreinte vocale, sur ses phrases les plus longues),
+    ou 0. Sans le modèle d'empreinte, 0 : on ne transpose pas à l'aveugle."""
+    import subprocess
+    import tempfile
+    from pathlib import Path
+
+    import numpy as np
+
+    from pipeline.extract import _require
+    from pipeline.hauteur import PARTS, TOLERANCE_RESSEMBLANCE, cible, decalage, filtre, hauteur_mediane
+    from pipeline.ressemblance import _lire, modele_empreinte, ressemblance_fichier
+    from pipeline.voice import fichier_brut
+
+    longues = sorted((s for s in phrases if fichier_brut(dossier, s["id"]).is_file()),
+                     key=lambda s: s["fin"] - s["debut"], reverse=True)[:4]
+    ecarts = {s["id"]: decalage(hauteur_mediane(fichier_brut(dossier, s["id"])), cible(s, f0_locuteur)) for s in longues}
+    if not any(ecarts.values()) or reference is None or not Path(reference).is_file():
+        return 0.0
+    with modele_empreinte() as empreinte, tempfile.TemporaryDirectory(prefix="voxlingo-hauteur-") as temp:
+        if empreinte is None or (visee := empreinte(_lire(Path(reference)))) is None:
+            return 0.0
+
+        def ressemblance(part: float) -> float | None:
+            scores = []
+            for s in longues:
+                brut = fichier_brut(dossier, s["id"])
+                filtres = [f for f in (filtre(ecarts[s["id"]] * part if abs(ecarts[s["id"]] * part) >= 0.5 else 0.0),
+                                       egaliseur) if f]
+                sortie = Path(temp) / f"{part}_{brut.name}"
+                if filtres:
+                    subprocess.run([_require("ffmpeg"), "-y", "-v", "error", "-i", str(brut), "-af", ",".join(filtres),
+                                    str(sortie)], capture_output=True)
+                else:
+                    sortie = brut
+                score = ressemblance_fichier(sortie, visee, empreinte)
+                if score is not None:
+                    scores.append(score)
+            return float(np.median(scores)) if scores else None
+
+        sans = ressemblance(0.0)
+        if sans is None:
+            return 0.0
+        for part in PARTS:
+            avec = ressemblance(part)
+            if avec is not None and avec >= sans - TOLERANCE_RESSEMBLANCE:
+                return part
+    return 0.0
+
+
 def _egalisation_sure(phrases: list[dict], filtre: str, dossier, reference) -> bool:
     """La voix égalisée ressemble-t-elle au moins autant au locuteur que la voix brute ? (empreinte vocale,
     sur ses phrases les plus longues). Sans le modèle d'empreinte, l'égalisation est gardée."""
@@ -790,6 +841,13 @@ def _do_export(job_id: str, report: Callable[[float], None]) -> None:
 
     hauteurs_locuteurs = {code: infos.get("f0_hz") for code, infos in jobs.locuteurs(data).items()
                           if infos.get("voix_generee", infos.get("voix")) == "clone"}
+    # Part de la correction jugée à l'empreinte vocale : jamais une voix moins ressemblante au personnage
+    parts_hauteur = {code: _part_hauteur([s for s in data["segments"] if jobs.locuteur(s) == code], f0,
+                                         dossier, reference_du_locuteur(code), egaliseurs.get(code))
+                     for code, f0 in hauteurs_locuteurs.items()}
+    for code, part in parts_hauteur.items():
+        logger.info("[%s] Hauteur de %s : %s", job_id, code,
+                    f"{part:.0%} de la correction" if part else "gardée (la voix ressemblerait moins au personnage)")
     placements = []
     for n, seg in enumerate(data["segments"]):
         cale = dossier / f"cale_{seg['id']:05d}.wav"
@@ -798,7 +856,8 @@ def _do_export(job_id: str, report: Callable[[float], None]) -> None:
                          egaliseurs.get(jobs.locuteur(seg)), niveau,
                          voix_isolee if voix_isolee.is_file() else None,
                          hauteur_cible(seg, hauteurs_locuteurs[jobs.locuteur(seg)])
-                         if jobs.locuteur(seg) in hauteurs_locuteurs else None)
+                         if jobs.locuteur(seg) in hauteurs_locuteurs else None,
+                         parts_hauteur.get(jobs.locuteur(seg), 0.0))
         seg["hauteur_dt"] = resultat["hauteur_dt"]
         seg["niveau_origine_db"] = niveau
         seg["gain_db"] = resultat["gain_db"]

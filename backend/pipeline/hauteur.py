@@ -6,7 +6,11 @@ monte quand il s'emporte et descend quand il se calme. Pour chaque phrase d'une 
   - cible : la hauteur médiane de la phrase d'origine, ramenée à moitié (en demi-tons) vers la hauteur
     habituelle du locuteur, pour ne pas suivre une mesure faussée (autre voix, musique) ;
   - la voix générée est transposée vers cette cible si l'écart dépasse ECART_MIN_DT, d'au plus
-    DECALAGE_MAX_DT, timbre préservé (formants conservés : la voix reste celle du clone).
+    DECALAGE_MAX_DT, le timbre suivant la hauteur (formants décalés) ;
+  - la transposition est jugée à l'empreinte vocale (pipeline/runner.py) : pour chaque locuteur, on garde
+    la plus forte part de la correction (PARTS : entière, moitié) qui ne rend pas la voix moins
+    ressemblante au personnage, ou aucune. Mesuré : une transposition forte, même timbre préservé, fait
+    perdre de la ressemblance ; une demi-correction, formants décalés, en garde presque toute.
 Une voix choisie dans la bibliothèque garde sa hauteur (choisie, pas recopiée).
 """
 
@@ -21,6 +25,8 @@ import soundfile as sf
 
 ECART_MIN_DT = 0.5  # en dessous, inaudible : rien n'est fait
 DECALAGE_MAX_DT = 5.0
+PARTS = (1.0, 0.5)  # parts de la correction essayées, de la plus forte à la plus faible
+TOLERANCE_RESSEMBLANCE = 0.02  # perte de ressemblance (empreinte vocale) acceptée pour corriger la hauteur
 POIDS_PHRASE = 0.5  # part de la hauteur de la phrase dans la cible (le reste : hauteur du locuteur)
 TAUX_ANALYSE = 16000
 
@@ -46,18 +52,16 @@ def cible(seg: dict[str, Any], f0_locuteur: float | None) -> float | None:
     return phrase or f0_locuteur or None
 
 
-def decalage(mesuree: float | None, visee: float | None) -> float:
-    """Transposition (demi-tons) à appliquer : 0 si inutile ou non mesurable, plafonnée sinon."""
+def decalage(mesuree: float | None, visee: float | None, part: float = 1.0) -> float:
+    """Transposition (demi-tons) à appliquer, `part` de l'écart : 0 si inutile ou non mesurable, plafonnée."""
     if not mesuree or not visee:
         return 0.0
-    ecart = 12 * math.log2(visee / mesuree)
-    if abs(ecart) < ECART_MIN_DT:
-        return 0.0
-    return max(-DECALAGE_MAX_DT, min(DECALAGE_MAX_DT, ecart))
+    ecart = part * max(-DECALAGE_MAX_DT, min(DECALAGE_MAX_DT, 12 * math.log2(visee / mesuree)))
+    return 0.0 if abs(ecart) < ECART_MIN_DT else ecart
 
 
 def filtre(demi_tons: float) -> str | None:
-    """Filtre FFmpeg de transposition, timbre préservé, ou None."""
+    """Filtre FFmpeg de transposition (formants décalés avec la hauteur), ou None."""
     if not demi_tons:
         return None
-    return f"rubberband=pitch={2 ** (demi_tons / 12):.5f}:formant=preserved:pitchq=quality"
+    return f"rubberband=pitch={2 ** (demi_tons / 12):.5f}:formant=shifted:pitchq=quality"
