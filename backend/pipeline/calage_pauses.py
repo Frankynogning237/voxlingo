@@ -12,7 +12,10 @@ propres respirations, et chaque morceau démarre quand le personnage reprend la 
      endroit du texte (même part de parole écoulée), ou est sautée si aucune ne convient : le coût est,
      dans les deux cas, le temps pendant lequel la voix parlerait bouche fermée (ou se tairait bouche ouverte) ;
   4. chaque morceau est posé au début de son passage, accéléré ou ralenti dans les mêmes limites que le
-     calage d'un bloc (pipeline/align.py) pour le remplir.
+     calage d'un bloc (pipeline/align.py) pour le remplir ;
+  5. chaque morceau suit l'intensité de son passage d'origine (le personnage hausse le ton, puis baisse la
+     voix), à ±NUANCE_MAX_DB près autour du volume de la phrase, calé ensuite au décibel près ; de courts
+     fondus évitent tout clic aux jonctions.
 Une phrase d'un seul passage dont le personnage ne parle qu'après un silence (Whisper fait souvent
 commencer la phrase trop tôt) est posée au moment où il commence vraiment à parler.
 Sinon (pas de pause, pas de décalage), rien n'est fait : calage d'un bloc.
@@ -39,6 +42,8 @@ PASSAGE_MIN_S = 0.08  # bruit bref de la voix d'origine, ignoré
 DECALAGE_MIN_S = 0.15  # silence d'origine en début de phrase à partir duquel la voix est décalée
 ACCELERATION_MAX = 1.25
 RALENTISSEMENT_MAX = 0.85
+NUANCE_MAX_DB = 6.0  # écart d'intensité maximal d'un morceau par rapport au reste de la phrase
+FONDU_S = 0.01
 TOLERANCE_FIN = 1.12  # légère accélération d'ensemble si les morceaux dépassent un peu le temps disponible
 ACCELERATION_LIMITE = 1.3  # aucun morceau au-delà, accélération d'ensemble comprise
 
@@ -190,6 +195,55 @@ def _atempo(extrait: np.ndarray, taux: int, facteur: float) -> np.ndarray:
         return sf.read(sortie, dtype="float32")[0]
 
 
+def niveau_actif(extrait: np.ndarray, taux: int) -> float | None:
+    """Niveau (dB) des trames où la voix parle."""
+    actif = activite(extrait, taux)
+    if not actif.any():
+        return None
+    pas = max(1, int(TRAME_S * taux))
+    trames = extrait[: len(actif) * pas].reshape(len(actif), pas)[actif]
+    return float(10 * np.log10(np.mean(trames ** 2) + 1e-12))
+
+
+def nuances(niveaux_origine: list[float | None], niveaux_voix: list[float | None],
+            durees: list[float]) -> list[float]:
+    """Gain (dB) de chaque morceau pour suivre l'intensité de son passage d'origine : relatif au reste de la
+    phrase (moyenne pondérée nulle), plafonné à ±NUANCE_MAX_DB. Sans mesure, aucun gain."""
+    ecarts = [o - v if o is not None and v is not None else None for o, v in zip(niveaux_origine, niveaux_voix)]
+    mesures = [(e, d) for e, d in zip(ecarts, durees) if e is not None]
+    if len(mesures) < 2:
+        return [0.0] * len(durees)
+    moyenne = sum(e * d for e, d in mesures) / (sum(d for _, d in mesures) or 1.0)
+    return [float(np.clip(e - moyenne, -NUANCE_MAX_DB, NUANCE_MAX_DB)) if e is not None else 0.0 for e in ecarts]
+
+
+def _fondus(x: np.ndarray, taux: int) -> np.ndarray:
+    n = min(int(FONDU_S * taux), len(x) // 2)
+    if n > 0:
+        rampe = np.linspace(0.0, 1.0, n, dtype=np.float32)
+        x = x.copy()
+        x[:n] *= rampe
+        x[-n:] *= rampe[::-1]
+    return x
+
+
+def _niveaux_origine(origine: Path | None, seg: dict[str, Any], morceaux: list[dict[str, float]]) -> list[float | None]:
+    """Niveau de la voix d'origine sur chaque passage où un morceau est posé."""
+    if origine is None:
+        return [None] * len(morceaux)
+    niveaux = []
+    try:
+        with sf.SoundFile(origine) as f:
+            taux = f.samplerate
+            for m in morceaux:
+                f.seek(min(int((seg["debut"] + m["pose"]) * taux), f.frames))
+                extrait = f.read(int(m["duree"] * taux), dtype="float32", always_2d=True).mean(axis=1)
+                niveaux.append(niveau_actif(extrait, taux) if len(extrait) else None)
+    except (RuntimeError, OSError):
+        return [None] * len(morceaux)
+    return niveaux
+
+
 def caler_sur_pauses(brut: Path, seg: dict[str, Any], sortie: Path,
                      origine: Path | None = None) -> dict[str, float] | None:
     """Écrit la voix calée morceau par morceau sur les passages d'origine (`origine` : voix d'origine isolée).
@@ -202,9 +256,12 @@ def caler_sur_pauses(brut: Path, seg: dict[str, Any], sortie: Path,
     if not morceaux:
         return None
     disponible = max(seg.get("fin_max", seg["fin"]) - seg["debut"], 0.1)
+    extraits = [voix[int(m["de"] * taux): int(m["a"] * taux)] for m in morceaux]
+    gains = nuances(_niveaux_origine(origine, seg, morceaux), [niveau_actif(x, taux) for x in extraits],
+                    [m["duree"] for m in morceaux])
     pieces, position, poids, total, plus_rapide = [], 0.0, 0.0, 0.0, 1.0
-    for m in morceaux:
-        extrait = voix[int(m["de"] * taux): int(m["a"] * taux)]
+    for m, extrait, gain in zip(morceaux, extraits, gains):
+        extrait = _fondus(extrait * np.float32(10 ** (gain / 20)), taux)
         longueur = len(extrait) / taux
         facteur = min(max(longueur / max(m["duree"] + 2 * MARGE_MORCEAU_S, 0.05), RALENTISSEMENT_MAX),
                       ACCELERATION_MAX)

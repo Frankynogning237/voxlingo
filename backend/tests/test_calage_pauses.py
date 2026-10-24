@@ -103,3 +103,23 @@ def test_morceaux_qui_ne_tiennent_pas_laissent_le_calage_d_un_bloc(tmp_path: Pat
     origine = _ecrire(tmp_path / "origine.wav", _voix([(0.0, 1.0), (2.0, 3.0)], 3.0))
     brut = _ecrire(tmp_path / "brut.wav", _voix([(0.0, 2.5), (2.8, 5.0)], 5.0))
     assert cp.caler_sur_pauses(brut, seg, tmp_path / "cale.wav", origine) is None
+
+
+def test_nuances_suivent_l_intensite_d_origine_autour_du_volume_de_la_phrase() -> None:
+    # Le personnage crie sur le 2e passage (+8 dB) ; la voix générée est uniforme
+    gains = cp.nuances([-30.0, -22.0], [-25.0, -25.0], [1.0, 1.0])
+    assert gains == [pytest.approx(-4.0), pytest.approx(4.0)]
+    assert sum(gains) == pytest.approx(0.0)  # le volume de la phrase reste calé ailleurs
+    assert cp.nuances([-40.0, -10.0], [-25.0, -25.0], [1.0, 1.0]) == [-cp.NUANCE_MAX_DB, cp.NUANCE_MAX_DB]
+    assert cp.nuances([None, -20.0], [-25.0, -25.0], [1.0, 1.0]) == [0.0, 0.0]
+
+
+def test_morceau_crie_plus_fort_dans_la_voix_calee(tmp_path: Path) -> None:
+    seg = {"debut": 0.0, "fin": 6.0, "fin_max": 6.5}
+    origine = _voix([(0.0, 2.0), (4.0, 6.0)], 7.0)
+    origine[int(4.0 * TAUX):] *= 2.5  # deuxième passage ~8 dB plus fort
+    brut = _ecrire(tmp_path / "brut.wav", _voix([(0.0, 2.0), (2.3, 4.3)], 4.3))
+    assert cp.caler_sur_pauses(brut, seg, tmp_path / "cale.wav", _ecrire(tmp_path / "o.wav", origine)) is not None
+    cale, _ = sf.read(tmp_path / "cale.wav", dtype="float32")
+    ecart = cp.niveau_actif(cale[int(4.2 * TAUX):int(5.8 * TAUX)], TAUX) - cp.niveau_actif(cale[:int(1.8 * TAUX)], TAUX)
+    assert ecart == pytest.approx(20 * np.log10(2.5), abs=0.5)  # le cri d'origine est reproduit

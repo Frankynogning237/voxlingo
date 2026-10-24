@@ -801,6 +801,18 @@ def _do_export(job_id: str, report: Callable[[float], None]) -> None:
     jobs.write_segments(job_id, data)
 
     construire_piste(placements, duree, folder / "voix_doublee.wav")
+    # Même acoustique que la scène : la voix doublée résonne comme la voix d'origine (pas de voix « de studio »)
+    status["piece"] = None
+    if voix_isolee.is_file() and get_settings().acoustique_piece:
+        from pipeline.acoustique import appliquer_piece, choisir_piece
+
+        piece = choisir_piece(voix_isolee, folder / "voix_doublee.wav")
+        if piece is not None:
+            avec_piece = folder / "voix_doublee_piece.wav"
+            appliquer_piece(folder / "voix_doublee.wav", avec_piece, piece["reverberation_s"], piece["quantite_db"])
+            avec_piece.replace(folder / "voix_doublee.wav")
+            status["piece"] = {k: round(v, 2) for k, v in piece.items()}
+    jobs.update_status(job_id, piece=status["piece"])
     report(0.6)
     options = status.get("options") or {}
     if options.get("conserver_fond", True):
