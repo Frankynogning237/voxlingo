@@ -5,6 +5,9 @@ expressions, mouvements de tête et du haut du corps suivent la voix doublée ; 
 viennent de la vidéo d'origine. Cet essai mesure, sur un extrait de quelques secondes, le temps de calcul
 et le rendu, avant toute intégration dans VoxLingo.
 
+Jamais exécuté : Modal exige un moyen de paiement enregistré. L'essai a été fait sur Kaggle à la place
+(kaggle/generer_essai_infinitetalk.py, qui en donne le résultat : visages non conservés sur T4).
+
 Il tourne sur Modal (carte A10G, 24 Go, en mode mémoire réduite ; L40S avec ESSAI_GPU=L40S) : le modèle demande une carte récente (bfloat16, flash-attention),
 que ni ce PC ni la T4 de Kaggle n'offrent. Modèle compressé (fp8, ~25 Go téléchargés une seule fois dans un
 volume Modal permanent). Coût indicatif : quelques dizaines de minutes de carte graphique, couvertes par les crédits

@@ -5,6 +5,12 @@ sur les GPU gratuits de Kaggle (T4 x2). InfiniteTalk est conçu pour des cartes 
 flash-attention) : le carnet l'adapte à la T4 (float16, attention de PyTorch, modèle compressé, encodeurs sur la
 deuxième carte). C'est un essai : il peut échouer ou être très lent, et le carnet le dit clairement.
 
+Résultat (octobre 2026, extrait de 4,7 s du projet 7705009c58d3, int8, 8 étapes) : la vidéo est produite, mais en
+245 minutes de calcul, et les visages ne sont pas conservés (le modèle invente d'autres personnes ; bords
+assombris). Inutilisable pour le doublage avec ces réglages : la synchronisation labiale (pipeline/lipsync.py,
+MuseTalk), qui ne retouche que la bouche, reste la solution retenue. Ne relancer qu'avec une carte récente
+(A100, L40S) et les réglages complets (pleine précision, 40 étapes).
+
 Usage, depuis la racine du projet :
     python kaggle/generer_essai_infinitetalk.py                      # carnet seulement
     python kaggle/generer_essai_infinitetalk.py 7705009c58d3 59.1 4.7  # carnet + paquet de l'extrait
