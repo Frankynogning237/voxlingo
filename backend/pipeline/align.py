@@ -62,26 +62,33 @@ def _filtrer(entree: Path, sortie: Path, filtres: list[str], seg: dict[str, Any]
 
 
 def caler(brut: Path, cale: Path, seg: dict[str, Any], gain_db: float = 0.0, egaliseur: str | None = None,
-          niveau_cible_db: float | None = None, origine: Path | None = None) -> dict[str, Any]:
+          niveau_cible_db: float | None = None, origine: Path | None = None,
+          hauteur_cible_hz: float | None = None) -> dict[str, Any]:
     """Écrit la voix calée et renvoie {facteur, duree, trop_long, gain_db}.
 
     Durée (atempo), timbre (`egaliseur`, filtre FFmpeg) et volume. Avec `niveau_cible_db` (niveau de
     la phrase d'origine, pipeline/niveau.py), le volume est calé au décibel près : on mesure la voix
     après durée et timbre, puis on applique l'écart exact. Sinon, `gain_db` (écart relatif) est appliqué.
     `origine` (voix d'origine isolée) situe les pauses du personnage pour le calage morceau par morceau.
+    `hauteur_cible_hz` (voix clonées, pipeline/hauteur.py) : la voix est transposée vers cette hauteur.
     """
     from pipeline.calage_pauses import caler_sur_pauses
     from pipeline.niveau import gain_pour_egaler, niveau_fichier_db
 
+    from pipeline.hauteur import decalage, filtre, hauteur_mediane
+
     duree = duree_wav(brut)
     facteur, trop_long = facteur_calage(duree, seg)
     filtres = []
+    demi_tons = decalage(hauteur_mediane(brut), hauteur_cible_hz) if hauteur_cible_hz else 0.0
     morceaux = cale.with_name(cale.stem + "_pauses.wav")
     par_pauses = caler_sur_pauses(brut, seg, morceaux, origine)
     if par_pauses is not None:  # durée déjà calée, morceau par morceau
         brut, facteur, trop_long = morceaux, par_pauses["facteur"], False
     elif abs(facteur - 1.0) >= 0.01:
         filtres.append(f"atempo={facteur:.4f}")
+    if demi_tons:
+        filtres.append(filtre(demi_tons))
     if egaliseur:
         filtres.append(egaliseur)
     if niveau_cible_db is not None:
@@ -100,4 +107,5 @@ def caler(brut: Path, cale: Path, seg: dict[str, Any], gain_db: float = 0.0, ega
     morceaux.unlink(missing_ok=True)
     duree_finale = par_pauses["duree"] if par_pauses is not None else round(duree / facteur, 2)
     return {"facteur": round(facteur, 3), "duree": duree_finale, "trop_long": trop_long,
-            "gain_db": round(gain_db, 2), "cale_sur_pauses": par_pauses is not None}
+            "gain_db": round(gain_db, 2), "cale_sur_pauses": par_pauses is not None,
+            "hauteur_dt": round(demi_tons, 1)}

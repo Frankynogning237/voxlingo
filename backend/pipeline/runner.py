@@ -784,13 +784,22 @@ def _do_export(job_id: str, report: Callable[[float], None]) -> None:
                             " ".join(f"{g:+.0f}" for g in gains))
     report(0.05)
 
+    # Hauteur des voix clonées calée sur le personnage (pipeline/hauteur.py) ; une voix de la bibliothèque
+    # garde la hauteur choisie
+    from pipeline.hauteur import cible as hauteur_cible
+
+    hauteurs_locuteurs = {code: infos.get("f0_hz") for code, infos in jobs.locuteurs(data).items()
+                          if infos.get("voix_generee", infos.get("voix")) == "clone"}
     placements = []
     for n, seg in enumerate(data["segments"]):
         cale = dossier / f"cale_{seg['id']:05d}.wav"
         niveau = niveau_actif_db(*lire_extrait(voix_isolee, seg["debut"], seg["fin"])) if voix_isolee.is_file() else None
         resultat = caler(fichier_brut(dossier, seg["id"]), cale, seg, gain_volume(seg),
                          egaliseurs.get(jobs.locuteur(seg)), niveau,
-                         voix_isolee if voix_isolee.is_file() else None)
+                         voix_isolee if voix_isolee.is_file() else None,
+                         hauteur_cible(seg, hauteurs_locuteurs[jobs.locuteur(seg)])
+                         if jobs.locuteur(seg) in hauteurs_locuteurs else None)
+        seg["hauteur_dt"] = resultat["hauteur_dt"]
         seg["niveau_origine_db"] = niveau
         seg["gain_db"] = resultat["gain_db"]
         seg["facteur_voix"] = resultat["facteur"]
