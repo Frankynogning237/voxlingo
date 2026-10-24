@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 import soundfile as sf
 
-from pipeline.align import RALENTISSEMENT_MAX, facteur_calage
+from pipeline.align import ACCELERATION_DOUCE, RALENTISSEMENT_MAX, facteur_calage
 from pipeline.assemble import TAUX, construire_piste, ecrire_srt
 from pipeline.segments import ACCELERATION_MAX, decouper, marquer_fin_max
 
@@ -25,7 +25,15 @@ SEGMENT = {"id": 0, "debut": 1.0, "fin": 3.0, "fin_max": 3.5}  # 2 s de parole, 
 
 
 def test_voix_qui_tient_n_est_pas_modifiee() -> None:
-    assert facteur_calage(2.2, SEGMENT) == (1.0, False)
+    assert facteur_calage(2.0, SEGMENT) == (1.0, False)
+
+
+def test_voix_un_peu_longue_finit_avec_la_phrase_plutot_que_dans_le_silence() -> None:
+    # 2,2 s pour une phrase de 2 s : légère accélération (×1,1), pas de débordement dans le silence
+    assert facteur_calage(2.2, SEGMENT) == (pytest.approx(1.1), False)
+    # au-delà de l'accélération douce, le silence suivant prend le relais
+    facteur, trop_long = facteur_calage(2.4, SEGMENT)
+    assert facteur == pytest.approx(ACCELERATION_DOUCE) and not trop_long
 
 
 def test_voix_trop_longue_est_acceleree_dans_le_temps_disponible() -> None:

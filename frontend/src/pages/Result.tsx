@@ -447,7 +447,7 @@ function RefaireMixage({ job }: { job: Job }) {
         type="button"
         onClick={() => mixage.mutate()}
         disabled={mixage.isPending}
-        title="Volume et timbre de chaque voix calés au décibel près sur la voix d'origine, fond sonore d'origine complet. Les voix ne sont pas régénérées."
+        title="Chaque voix recalée sur les pauses du personnage (elle se tait quand il se tait), volume et timbre calés au décibel près sur la voix d'origine, fond sonore d'origine complet. Les voix ne sont pas régénérées."
         className="flex items-center justify-center gap-2 text-[14px] text-white/70 hover:text-white disabled:opacity-50"
       >
         <AudioLines className="size-4" /> {mixage.isPending ? 'Lancement…' : 'Refaire le mixage du son'}

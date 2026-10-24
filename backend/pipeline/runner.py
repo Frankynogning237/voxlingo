@@ -789,7 +789,8 @@ def _do_export(job_id: str, report: Callable[[float], None]) -> None:
         cale = dossier / f"cale_{seg['id']:05d}.wav"
         niveau = niveau_actif_db(*lire_extrait(voix_isolee, seg["debut"], seg["fin"])) if voix_isolee.is_file() else None
         resultat = caler(fichier_brut(dossier, seg["id"]), cale, seg, gain_volume(seg),
-                         egaliseurs.get(jobs.locuteur(seg)), niveau)
+                         egaliseurs.get(jobs.locuteur(seg)), niveau,
+                         voix_isolee if voix_isolee.is_file() else None)
         seg["niveau_origine_db"] = niveau
         seg["gain_db"] = resultat["gain_db"]
         seg["facteur_voix"] = resultat["facteur"]
