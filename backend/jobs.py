@@ -114,6 +114,14 @@ def write_status(job_id: str, status: dict[str, Any]) -> None:
         tmp.replace(path)
 
 
+def doublage_pret(status: dict[str, Any]) -> bool:
+    """Vrai si la vidéo doublée est exportée et qu'il ne restait que la synchronisation labiale."""
+    etapes = {s["cle"]: s["etat"] for s in status.get("etapes", [])}
+    sortie = status.get("fichier_sortie")
+    return (status.get("etape") == "synchro_labiale" and etapes.get("export") == "termine"
+            and bool(sortie) and (project_dir(status["id"]) / sortie).is_file())
+
+
 def update_status(job_id: str, **changes: Any) -> dict[str, Any]:
     status = read_status(job_id)
     if status is None:

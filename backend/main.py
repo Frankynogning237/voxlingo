@@ -101,7 +101,15 @@ def startup() -> None:
     logger.info("Démarrage : device=%s, mode=%s", runtime.device, runtime.mode)
     # Une tâche "en cours" au démarrage a été interrompue par l'arrêt du serveur
     for status in jobs.list_jobs():
-        if status["etat"] in ("en_attente", "en_cours"):
+        if status["etat"] in ("en_attente", "en_cours") and jobs.doublage_pret(status):
+            # Coupé pendant la synchronisation labiale : le doublage, déjà exporté, reste utilisable
+            # (la synchro se relance depuis l'écran Résultat) au lieu de renvoyer à l'édition
+            jobs.update_step(status["id"], "synchro_labiale", etat="kaggle")
+            jobs.update_status(
+                status["id"], etat="termine", etape=None,
+                synchro_erreur="Synchronisation labiale interrompue par l'arrêt du moteur : relancez-la.",
+            )
+        elif status["etat"] in ("en_attente", "en_cours"):
             jobs.update_status(
                 status["id"], etat="erreur",
                 erreur="Traitement interrompu par l'arrêt du serveur.",

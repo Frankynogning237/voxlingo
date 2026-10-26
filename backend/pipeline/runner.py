@@ -36,6 +36,9 @@ WEIGHTS: dict[str, int] = {
 }
 
 
+SIGNE_DE_VIE_S = 60.0
+
+
 def _progress_reporter(job_id: str, cle: str) -> Callable[[float], None]:
     """Renvoie une fonction qui convertit l'avancement d'une étape (0..1) en progression globale."""
     done_before = 0
@@ -44,13 +47,15 @@ def _progress_reporter(job_id: str, cle: str) -> Callable[[float], None]:
             break
         done_before += weight
     weight = WEIGHTS[cle]
-    last = {"etape": -1}
+    last = {"etape": -1, "ecrit": 0.0}
 
     def report(fraction: float) -> None:
         jobs.check_cancelled(job_id)  # point de contrôle de l'annulation
         etape = int(fraction * 100)
-        if etape != last["etape"]:  # évite d'écrire status.json pour rien
-            last["etape"] = etape
+        # Évite d'écrire status.json pour rien, mais donne un signe de vie au moins chaque minute :
+        # le carnet Kaggle prend un projet muet depuis 5 min pour un projet figé et relance le moteur
+        if etape != last["etape"] or time.monotonic() - last["ecrit"] >= SIGNE_DE_VIE_S:
+            last["etape"], last["ecrit"] = etape, time.monotonic()
             jobs.update_status(
                 job_id, progression=int(done_before + weight * fraction), progression_etape=etape
             )
@@ -931,6 +936,8 @@ def run_voices(job_id: str) -> None:
         if not options.get("synchro_labiale"):
             jobs.update_step(job_id, "synchro_labiale", etat="ignore")
         else:
+            # Le doublage est prêt : sauvegardé avant la synchro, longue, qu'une fin de séance peut couper
+            sauvegarde.apres_export(job_id)
             _synchro_labiale(job_id)
 
     _guarded(job_id, body, etat_final="termine")

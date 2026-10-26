@@ -14,7 +14,11 @@ Un morceau sans visage exploitable (MuseTalk échoue) garde simplement l'image d
 from __future__ import annotations
 
 import logging
+import re
 import subprocess
+import threading
+import time
+from collections import deque
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -27,6 +31,8 @@ logger = logging.getLogger("voxlingo.lipsync")
 MORCEAU_MAX_S = 15.0  # durée maximale confiée à MuseTalk d'un coup (mémoire)
 MARGE_S = 0.2  # avant et après chaque phrase
 ECART_FUSION_S = 0.6  # deux phrases plus proches que ça sont traitées ensemble
+SILENCE_MAX_S = 20 * 60  # MuseTalk muet et sans nouveau passage depuis 20 min : figé, on l'arrête
+SONDAGE_S = 2.0  # intervalle de suivi de MuseTalk
 CADENCE = 25  # images/s des morceaux (la vidéo finale est remise à la cadence d'origine)
 # Réencodage commun à tous les morceaux, pour pouvoir les recoller sans réencoder une seconde fois
 ENCODAGE = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "17", "-pix_fmt", "yuv420p",
@@ -98,6 +104,49 @@ def sur_la_grille(t: float) -> float:
     return round(t * CADENCE) / CADENCE
 
 
+class _Sortie:
+    """Sortie de MuseTalk lue au fil de l'eau : dernières lignes, dernier pourcentage, dernier signe de vie."""
+
+    def __init__(self) -> None:
+        self.lignes: deque[str] = deque(maxlen=40)
+        self.pourcent = 0
+        self.activite = time.monotonic()
+
+
+def _suivre_sortie(processus: subprocess.Popen) -> _Sortie:
+    """Lit la sortie dans un fil à part : la progression avance même quand MuseTalk n'écrit rien."""
+    sortie = _Sortie()
+
+    def lire() -> None:
+        for ligne in processus.stdout:  # les barres tqdm (« \r ») comptent comme des lignes
+            sortie.lignes.append(ligne)
+            sortie.activite = time.monotonic()
+            if barre := re.search(r"(\d{1,3})%\|", ligne):
+                sortie.pourcent = min(int(barre.group(1)), 100)
+
+    threading.Thread(target=lire, name="musetalk-sortie", daemon=True).start()
+    return sortie
+
+
+def _attendre_musetalk(processus: subprocess.Popen, sortie: _Sortie, resultats: Path, total: int,
+                       rapporter: Callable[[float], None]) -> None:
+    """Suit MuseTalk jusqu'à sa fin : passages finis, plus la barre du passage en cours. Sans aucun signe de
+    vie (ni sortie ni nouveau passage) pendant SILENCE_MAX_S, il est considéré figé."""
+    faits_avant, avance = 0, 0.1
+    while processus.poll() is None:
+        faits = len(list(resultats.glob("synchro_*.mp4"))) if resultats.is_dir() else 0
+        if faits != faits_avant:
+            faits_avant, sortie.activite, sortie.pourcent = faits, time.monotonic(), 0
+        # Un passage compte trois barres (repères du visage, calcul, recollage) : la sienne n'en est qu'un tiers
+        en_cours = min(sortie.pourcent / 100 / 3, 0.9) if faits < total else 0
+        avance = max(avance, 0.1 + 0.75 * (faits + en_cours) / total)
+        rapporter(avance)  # peut lever JobCancelled ; tient aussi l'état du projet à jour
+        if time.monotonic() - sortie.activite > SILENCE_MAX_S:
+            raise LipsyncError(f"MuseTalk ne répond plus depuis {SILENCE_MAX_S // 60} min "
+                               f"({faits}/{total} passage(s) synchronisé(s)) : il a été arrêté.")
+        time.sleep(SONDAGE_S)
+
+
 def _extrait_video(video: Path, debut: float, fin: float, taille: str, sortie: Path) -> None:
     _ffmpeg("-ss", f"{debut:.3f}", "-i", str(video), "-vf", f"{taille},tpad=stop_mode=clone:stop_duration=1",
             "-frames:v", str(images(debut, fin)), *ENCODAGE, str(sortie))
@@ -145,22 +194,18 @@ def synchroniser(video: Path, piste: Path, segments: list[dict[str, Any]], duree
 
     # Dans un carnet Jupyter, MPLBACKEND désigne l'affichage du carnet, inconnu de cet environnement :
     # matplotlib (importé par mmpose) refuserait de démarrer
-    env = {**os.environ, "MPLBACKEND": "Agg"}
+    env = {**os.environ, "MPLBACKEND": "Agg", "PYTHONUNBUFFERED": "1"}
     processus = subprocess.Popen(commande, cwd=settings.musetalk_dir, stdout=subprocess.PIPE, env=env,
                                  stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
-    journal: list[str] = []
+    journal = _suivre_sortie(processus)
     try:
-        for ligne in processus.stdout:
-            journal = (journal + [ligne])[-40:]
-            faits = len(list((resultats / "v15").glob("synchro_*.mp4"))) if (resultats / "v15").is_dir() else 0
-            rapporter(0.1 + 0.75 * faits / len(morceaux))  # peut lever JobCancelled
-        processus.wait()
+        _attendre_musetalk(processus, journal, resultats / "v15", len(morceaux), rapporter)
     except BaseException:
-        processus.kill()  # annulation : on arrête MuseTalk
+        processus.kill()  # annulation ou MuseTalk figé : on l'arrête
         raise
     synchronises = {i for i in range(len(morceaux)) if (resultats / "v15" / f"synchro_{i:04d}.mp4").is_file()}
     if not synchronises:
-        logger.error("MuseTalk : %s", "".join(journal[-20:]))
+        logger.error("MuseTalk : %s", "".join(list(journal.lignes)[-20:]))
         raise LipsyncError("MuseTalk n'a synchronisé aucun passage (visages introuvables ou manque de mémoire).")
     logger.info("MuseTalk : %d/%d morceau(x) synchronisé(s)", len(synchronises), len(morceaux))
 
