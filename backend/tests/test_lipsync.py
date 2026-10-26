@@ -19,16 +19,17 @@ if os.environ.get("FIGE"):
 p = argparse.ArgumentParser()
 p.add_argument("--inference_config"); p.add_argument("--result_dir")
 p.add_argument("--unet_model_path"); p.add_argument("--unet_config"); p.add_argument("--version")
-p.add_argument("--use_float16", action="store_true")
+p.add_argument("--use_float16", action="store_true"); p.add_argument("--batch_size")
 a = p.parse_args()
 texte = open(a.inference_config, encoding="utf-8").read()
 os.makedirs(os.path.join(a.result_dir, "v15"), exist_ok=True)
 echecs = os.environ.get("ECHECS", "").split(",")
+print("Loaded inference config:", a.inference_config, flush=True)
 for nom, video, nom_sortie in re.findall(r'(tache_\\d+):\\n  video_path: "([^"]+)"\\n  audio_path: "[^"]+"\\n'
                                          r'  result_name: "([^"]+)"', texte):
     print(nom, flush=True)
     if os.environ.get("LENT"):  # barre tqdm à mi-chemin, sans saut de ligne, puis un long calcul muet
-        sys.stderr.write(" 50%|#####     | 5/10\\r"); sys.stderr.flush(); time.sleep(float(os.environ["LENT"]))
+        sys.stderr.write(" 50%|#####     | 5/10 [00:01<00:01]\\r"); sys.stderr.flush(); time.sleep(float(os.environ["LENT"]))
     if nom not in echecs:
         shutil.copy(video, os.path.join(a.result_dir, "v15", nom_sortie))
 '''
@@ -210,3 +211,34 @@ def test_redemarrage_pendant_la_synchro_garde_le_doublage(tmp_path, monkeypatch)
     assert synchro["etat"] == "termine" and "interrompue" in synchro["synchro_erreur"]
     assert next(s for s in synchro["etapes"] if s["cle"] == "synchro_labiale")["etat"] == "kaggle"
     assert voix["etat"] == "erreur"  # coupé avant l'export : rien d'utilisable
+
+
+def test_repartir_equilibre_les_durees():
+    assert lipsync.repartir([10.0, 2.0, 7.0, 4.0], 2) == [[0, 1], [2, 3]]
+    assert lipsync.repartir([3.0], 2) == [[0]]  # pas de processus sans passage
+    assert lipsync.repartir([1.0, 1.0], 1) == [[0, 1]]
+
+
+@ffmpeg
+def test_synchroniser_sur_deux_cartes(projet, monkeypatch):
+    """Deux cartes graphiques : deux MuseTalk en parallèle, chacun ses passages, tous recollés."""
+    dossier, video, piste, segments = projet
+    monkeypatch.setattr(lipsync, "_cartes_graphiques", lambda: 2)
+    monkeypatch.setattr(lipsync, "SONDAGE_S", 0.05)
+    lancements = []
+    popen = subprocess.Popen
+
+    def compter(commande, **options):
+        if "--inference_config" in commande:  # FFmpeg passe aussi par Popen
+            configuration = Path(commande[commande.index("--inference_config") + 1]).read_text(encoding="utf-8")
+            lancements.append((configuration, options["env"].get("CUDA_VISIBLE_DEVICES")))
+        return popen(commande, **options)
+
+    monkeypatch.setattr(lipsync.subprocess, "Popen", compter)
+    progression = []
+    sortie = lipsync.synchroniser(video, piste, segments, 6.0, dossier, progression.append)
+    assert sorted(carte for _, carte in lancements) == ["0", "1"]
+    assert all(texte.count("tache_") == 1 for texte, _ in lancements)
+    image = next(s for s in _sonder(sortie)["streams"] if s["codec_type"] == "video")
+    assert int(image["nb_read_frames"]) == 6 * lipsync.CADENCE
+    assert progression == sorted(progression)
