@@ -83,9 +83,6 @@ class Settings(BaseSettings):
     # Égalisation du timbre des voix clonées vers la voix d'origine (pipeline/timbre_eq.py) : mesurée de
     # 100 Hz à 6,3 kHz et gardée seulement si la voix ressemble au moins autant au locuteur
     egalisation_timbre: bool = True
-    # Acoustique de la pièce (pipeline/acoustique.py) : la voix doublée reçoit la réverbération mesurée sur la
-    # voix d'origine, seulement si elle est mesurable et que la ressemblance s'améliore
-    acoustique_piece: bool = True
     # Sauvegarde automatique sur Hugging Face (moteur sur Kaggle/Colab) : jeton avec droit
     # d'écriture et dépôt dataset privé (par défaut « votre-compte/voxlingo-sauvegarde »)
     hf_token_ecriture: str | None = None
