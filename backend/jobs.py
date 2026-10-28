@@ -114,14 +114,6 @@ def write_status(job_id: str, status: dict[str, Any]) -> None:
         tmp.replace(path)
 
 
-def doublage_pret(status: dict[str, Any]) -> bool:
-    """Vrai si la vidéo doublée est exportée et qu'il ne restait que la synchronisation labiale."""
-    etapes = {s["cle"]: s["etat"] for s in status.get("etapes", [])}
-    sortie = status.get("fichier_sortie")
-    return (status.get("etape") == "synchro_labiale" and etapes.get("export") == "termine"
-            and bool(sortie) and (project_dir(status["id"]) / sortie).is_file())
-
-
 def update_status(job_id: str, **changes: Any) -> dict[str, Any]:
     status = read_status(job_id)
     if status is None:
@@ -259,13 +251,6 @@ def start_analysis(job_id: str) -> None:
     from pipeline.runner import run_analysis
 
     threading.Thread(target=run_analysis, args=(job_id,), name=f"analyse-{job_id}", daemon=True).start()
-
-
-def start_remix(job_id: str) -> None:
-    """Refait le mixage du son (voix existantes) dans un thread en arrière-plan."""
-    from pipeline.runner import run_remix
-
-    threading.Thread(target=run_remix, args=(job_id,), name=f"mixage-{job_id}", daemon=True).start()
 
 
 def start_lipsync(job_id: str) -> None:

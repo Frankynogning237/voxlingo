@@ -13,23 +13,18 @@ from pipeline import lipsync
 
 # Faux MuseTalk : « synchronise » en recopiant chaque vidéo source ; échoue sur les tâches demandées
 FAUX_MUSETALK = '''
-import argparse, os, re, shutil, sys, time
-if os.environ.get("FIGE"):
-    time.sleep(60)  # MuseTalk figé : plus rien ne sort
+import argparse, os, re, shutil
 p = argparse.ArgumentParser()
 p.add_argument("--inference_config"); p.add_argument("--result_dir")
 p.add_argument("--unet_model_path"); p.add_argument("--unet_config"); p.add_argument("--version")
-p.add_argument("--use_float16", action="store_true"); p.add_argument("--batch_size")
+p.add_argument("--use_float16", action="store_true")
 a = p.parse_args()
 texte = open(a.inference_config, encoding="utf-8").read()
 os.makedirs(os.path.join(a.result_dir, "v15"), exist_ok=True)
 echecs = os.environ.get("ECHECS", "").split(",")
-print("Loaded inference config:", a.inference_config, flush=True)
 for nom, video, nom_sortie in re.findall(r'(tache_\\d+):\\n  video_path: "([^"]+)"\\n  audio_path: "[^"]+"\\n'
                                          r'  result_name: "([^"]+)"', texte):
     print(nom, flush=True)
-    if os.environ.get("LENT"):  # barre tqdm à mi-chemin, sans saut de ligne, puis un long calcul muet
-        sys.stderr.write(" 50%|#####     | 5/10 [00:01<00:01]\\r"); sys.stderr.flush(); time.sleep(float(os.environ["LENT"]))
     if nom not in echecs:
         shutil.copy(video, os.path.join(a.result_dir, "v15", nom_sortie))
 '''
@@ -147,98 +142,3 @@ def test_echec_de_la_synchro_ne_fait_pas_echouer_le_doublage(monkeypatch):
     runner._synchro_labiale("abc")  # ne lève rien
     assert etapes == [("synchro_labiale", "kaggle")]
     assert statuts[-1] == {"synchro_erreur": "visages introuvables"}
-
-
-@ffmpeg
-def test_progression_avance_pendant_un_passage(projet, monkeypatch):
-    """Pendant un long passage muet, la progression suit la barre de MuseTalk au lieu de rester à 10 %."""
-    dossier, video, piste, segments = projet
-    monkeypatch.setenv("LENT", "1.5")
-    monkeypatch.setattr(lipsync, "SONDAGE_S", 0.05)
-    progression = []
-    lipsync.synchroniser(video, piste, segments, 6.0, dossier, progression.append)
-    assert any(0.1 < p < 0.85 for p in progression)
-    assert progression == sorted(progression)  # ne recule jamais
-
-
-@ffmpeg
-def test_musetalk_fige_est_arrete(projet, monkeypatch):
-    dossier, video, piste, segments = projet
-    monkeypatch.setenv("FIGE", "1")
-    monkeypatch.setattr(lipsync, "SILENCE_MAX_S", 1)
-    monkeypatch.setattr(lipsync, "SONDAGE_S", 0.05)
-    with pytest.raises(lipsync.LipsyncError, match="ne répond plus"):
-        lipsync.synchroniser(video, piste, segments, 6.0, dossier)
-
-
-def test_progression_donne_signe_de_vie(monkeypatch):
-    """Même pourcentage répété : status.json est quand même réécrit après SIGNE_DE_VIE_S."""
-    from pipeline import runner
-
-    ecritures = []
-    monkeypatch.setattr(runner.jobs, "check_cancelled", lambda job_id: None)
-    monkeypatch.setattr(runner.jobs, "update_status", lambda job_id, **c: ecritures.append(c))
-    report = runner._progress_reporter("p1", "synchro_labiale")
-    report(0.1)
-    report(0.1)
-    assert len(ecritures) == 1
-    monkeypatch.setattr(runner, "SIGNE_DE_VIE_S", 0)
-    report(0.1)
-    assert len(ecritures) == 2
-
-
-def test_redemarrage_pendant_la_synchro_garde_le_doublage(tmp_path, monkeypatch):
-    """Moteur coupé pendant la synchro : le projet reste terminé (vidéo doublée), pas renvoyé à l'édition."""
-    import jobs
-    import main
-    from config import get_settings
-
-    monkeypatch.setattr(get_settings(), "data_dir", tmp_path)
-    for job_id, exporte in (("synchro", True), ("voix", False)):
-        jobs.project_dir(job_id).mkdir(parents=True)
-        jobs.create_job(job_id, "video.mp4", "input.mp4", "de", {"synchro_labiale": True})
-        status = jobs.read_status(job_id)
-        for etape in status["etapes"]:
-            if etape["cle"] in ("extraction", "voix") or (exporte and etape["cle"] == "export"):
-                etape["etat"] = "termine"
-        jobs.write_status(job_id, status)
-        if exporte:
-            (jobs.project_dir(job_id) / "doublage.mp4").write_bytes(b"video")
-        jobs.update_status(job_id, etat="en_cours", etape="synchro_labiale" if exporte else "export",
-                           fichier_sortie="doublage.mp4" if exporte else None)
-    main.startup()
-    synchro, voix = jobs.read_status("synchro"), jobs.read_status("voix")
-    assert synchro["etat"] == "termine" and "interrompue" in synchro["synchro_erreur"]
-    assert next(s for s in synchro["etapes"] if s["cle"] == "synchro_labiale")["etat"] == "kaggle"
-    assert voix["etat"] == "erreur"  # coupé avant l'export : rien d'utilisable
-
-
-def test_repartir_equilibre_les_durees():
-    assert lipsync.repartir([10.0, 2.0, 7.0, 4.0], 2) == [[0, 1], [2, 3]]
-    assert lipsync.repartir([3.0], 2) == [[0]]  # pas de processus sans passage
-    assert lipsync.repartir([1.0, 1.0], 1) == [[0, 1]]
-
-
-@ffmpeg
-def test_synchroniser_sur_deux_cartes(projet, monkeypatch):
-    """Deux cartes graphiques : deux MuseTalk en parallèle, chacun ses passages, tous recollés."""
-    dossier, video, piste, segments = projet
-    monkeypatch.setattr(lipsync, "_cartes_graphiques", lambda: 2)
-    monkeypatch.setattr(lipsync, "SONDAGE_S", 0.05)
-    lancements = []
-    popen = subprocess.Popen
-
-    def compter(commande, **options):
-        if "--inference_config" in commande:  # FFmpeg passe aussi par Popen
-            configuration = Path(commande[commande.index("--inference_config") + 1]).read_text(encoding="utf-8")
-            lancements.append((configuration, options["env"].get("CUDA_VISIBLE_DEVICES")))
-        return popen(commande, **options)
-
-    monkeypatch.setattr(lipsync.subprocess, "Popen", compter)
-    progression = []
-    sortie = lipsync.synchroniser(video, piste, segments, 6.0, dossier, progression.append)
-    assert sorted(carte for _, carte in lancements) == ["0", "1"]
-    assert all(texte.count("tache_") == 1 for texte, _ in lancements)
-    image = next(s for s in _sonder(sortie)["streams"] if s["codec_type"] == "video")
-    assert int(image["nb_read_frames"]) == 6 * lipsync.CADENCE
-    assert progression == sorted(progression)

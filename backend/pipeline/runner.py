@@ -16,7 +16,7 @@ import jobs
 import sauvegarde
 from pipeline.extract import compute_peaks, extract_audio, make_filmstrip, make_thumbnail, probe_duration
 from pipeline.transcribe import transcribe
-from pipeline.adjust import a_ajuster, ajuster_segments
+from pipeline.adjust import ajuster_segments
 from pipeline.segments import est_trop_long, marquer_fin_max
 from pipeline.translate import translate_segments
 
@@ -36,9 +36,6 @@ WEIGHTS: dict[str, int] = {
 }
 
 
-SIGNE_DE_VIE_S = 60.0
-
-
 def _progress_reporter(job_id: str, cle: str) -> Callable[[float], None]:
     """Renvoie une fonction qui convertit l'avancement d'une étape (0..1) en progression globale."""
     done_before = 0
@@ -47,15 +44,13 @@ def _progress_reporter(job_id: str, cle: str) -> Callable[[float], None]:
             break
         done_before += weight
     weight = WEIGHTS[cle]
-    last = {"etape": -1, "ecrit": 0.0}
+    last = {"etape": -1}
 
     def report(fraction: float) -> None:
         jobs.check_cancelled(job_id)  # point de contrôle de l'annulation
         etape = int(fraction * 100)
-        # Évite d'écrire status.json pour rien, mais donne un signe de vie au moins chaque minute :
-        # le carnet Kaggle prend un projet muet depuis 5 min pour un projet figé et relance le moteur
-        if etape != last["etape"] or time.monotonic() - last["ecrit"] >= SIGNE_DE_VIE_S:
-            last["etape"], last["ecrit"] = etape, time.monotonic()
+        if etape != last["etape"]:  # évite d'écrire status.json pour rien
+            last["etape"] = etape
             jobs.update_status(
                 job_id, progression=int(done_before + weight * fraction), progression_etape=etape
             )
@@ -177,8 +172,7 @@ def _do_translate(job_id: str, report: Callable[[float], None], ids: set[int] | 
 
 
 def _traduire(job_id: str, report: Callable[[float], None], ids: set[int] | None = None) -> None:
-    """Traduit les segments (tous, ou seulement `ids`), puis ajuste la durée des phrases si l'option est active
-    (trop longues, longues à caler sur les pauses d'origine, trop courtes)."""
+    """Traduit les segments (tous, ou seulement `ids`), puis ajuste les phrases trop longues si l'option est active."""
     status = jobs.read_status(job_id)
     source, cible = status["langue_source"], status["langue_cible"]
     ajuster = status.get("options", {}).get("ajuster_trop_longs", True)
@@ -197,14 +191,13 @@ def _traduire(job_id: str, report: Callable[[float], None], ids: set[int] | None
         seg["traduction_ia"] = texte
         seg["traduction"] = texte
         seg["a_retraduire"] = False
-        seg.pop("allongement_essaye", None)
         seg["trop_long"] = est_trop_long(seg, texte, source, cible, jobs.strategie(status))
     data["langue_cible"] = cible
     data["moteur_traduction"] = moteur
     jobs.write_segments(job_id, data)
 
     bilan = None
-    if ajuster and a_ajuster(data["segments"], source, cible, jobs.strategie(status)):
+    if ajuster and any(seg["trop_long"] for seg in data["segments"]):
         bilan = ajuster_segments(data, source, cible, on_progress=_sous_progression(report, fin_traduction, 1),
                                  strategie=jobs.strategie(status))
         jobs.write_segments(job_id, data)
@@ -223,10 +216,9 @@ def _retraduire_selection(job_id: str, data: dict, ids: set[int], source: str, c
         if seg["id"] in nouvelles:
             seg["traduction_ia"] = seg["traduction"] = nouvelles[seg["id"]]
             seg["a_retraduire"] = False
-            seg.pop("allongement_essaye", None)
             seg["trop_long"] = est_trop_long(seg, seg["traduction"], source, cible, jobs.strategie(status))
     jobs.write_segments(job_id, data)
-    if ajuster and a_ajuster(data["segments"], source, cible, jobs.strategie(status), ids=set(nouvelles)):
+    if ajuster and any(seg["trop_long"] for seg in data["segments"] if seg["id"] in nouvelles):
         bilan = ajuster_segments(data, source, cible, ids=set(nouvelles), strategie=jobs.strategie(status),
                                  on_progress=_sous_progression(report, 0.8, 1.0))
         jobs.write_segments(job_id, data)
@@ -240,7 +232,7 @@ def _do_adjust(job_id: str, ids: set[int] | None, report: Callable[[float], None
 
 
 def _ajuster(job_id: str, ids: set[int] | None, report: Callable[[float], None]) -> None:
-    """Ajuste la durée des phrases (demande de l'utilisateur depuis l'éditeur)."""
+    """Ajuste les phrases trop longues après les modifications de l'utilisateur."""
     status = jobs.read_status(job_id)
     data = jobs.read_segments(job_id)
     data["duree_s"] = status.get("duree_s") or data.get("duree_s")
@@ -306,11 +298,8 @@ def _traiter(job_id: str) -> None:
         separer(video, folder, on_progress=report)
 
     def do_transcribe(report: Callable[[float], None]) -> None:
-        from pipeline.transcribe import termes_du_glossaire
-
         voix_isolee = folder / "voix_isolee.wav"
-        termes = termes_du_glossaire((status.get("options") or {}).get("glossaire", ""))
-        result = transcribe(voix_isolee if voix_isolee.is_file() else audio, on_progress=report, termes=termes)
+        result = transcribe(voix_isolee if voix_isolee.is_file() else audio, on_progress=report)
         jobs.write_segments(job_id, result.to_dict())
         jobs.update_status(job_id, langue_source=result.langue, probabilite_langue=result.probabilite)
 
@@ -564,60 +553,9 @@ def _verifier_ressemblance(job_id: str, segments: list[dict], par_locuteur: dict
     return ressemblances
 
 
-def _verifier_ecoute(job_id: str, segments: list[dict], voix: dict[int, str], langue: str, dossier,
-                     nouvelles: set[int], report: Callable[[float], None]) -> dict[int, float]:
-    """Écoute de contrôle (pipeline/ecoute.py) des phrases générées à l'instant : chacune est retranscrite et
-    comparée à son texte ; celles qui ne le disent pas (mots sautés, déformés, inventés) sont refaites une fois
-    en mode stable, et la version la plus fidèle des deux est gardée. Renvoie la fidélité de chaque phrase."""
-    from pipeline.ecoute import mesurer, modele_ecoute, phrases_a_refaire
-    from pipeline.voice import VoiceError, fichier_brut, generer_voix
-
-    a_ecouter = [s for s in segments if s["id"] in nouvelles]
-    if not a_ecouter:
-        return {}
-    textes = {s["id"]: s["traduction"] for s in a_ecouter}
-    fichiers = {s["id"]: fichier_brut(dossier, s["id"]) for s in a_ecouter}
-    with modele_ecoute() as ecouter:
-        if ecouter is None:
-            return {}
-        fidelites = mesurer(fichiers, textes, langue, ecouter, _sous_progression(report, 0, 0.4))
-    refaire = phrases_a_refaire(fidelites)
-    logger.info("[%s] Écoute de contrôle : %d phrase(s) écoutée(s), %d à refaire", job_id, len(fidelites), len(refaire))
-    report(0.4)
-    if not refaire:
-        return fidelites
-
-    reprises = [s for s in a_ecouter if s["id"] in refaire]
-    avant = {s["id"]: dossier / f"avant_ecoute_{s['id']:05d}.wav" for s in reprises}
-    for s in reprises:
-        fichiers[s["id"]].replace(avant[s["id"]])
-        s["stabiliser"] = True  # diction plus sage, sans intonation importée : moins de mots avalés
-    try:
-        try:
-            generer_voix(reprises, langue, voix, dossier, on_progress=_sous_progression(report, 0.4, 0.85))
-        except VoiceError as exc:
-            logger.warning("[%s] Reprise des phrases infidèles impossible (%s) : versions d'origine gardées",
-                           job_id, exc)
-            return fidelites
-        with modele_ecoute() as ecouter:
-            nouvelles_fidelites = mesurer({i: fichiers[i] for i in refaire}, textes, langue, ecouter) if ecouter else {}
-        for ident, valeur in nouvelles_fidelites.items():
-            if valeur > fidelites[ident]:  # la reprise dit mieux son texte : on la garde
-                fidelites[ident] = valeur
-                avant[ident].unlink()
-        gardees = sum(1 for f in avant.values() if not f.is_file())
-        logger.info("[%s] %d phrase(s) refaite(s) après écoute, %d plus fidèle(s) gardée(s)", job_id, len(reprises),
-                    gardees)
-    finally:
-        for ident, fichier in avant.items():  # version d'origine plus fidèle (ou reprise interrompue) : remise
-            if fichier.is_file():
-                fichier.replace(fichiers[ident])
-    return fidelites
-
-
 def _do_voices(job_id: str, report: Callable[[float], None]) -> None:
     """Génère chaque phrase traduite avec la voix de son locuteur (seules les phrases modifiées sont refaites)."""
-    from pipeline.voice import Manifeste, fichier_brut, generer_voix
+    from pipeline.voice import Manifeste, generer_voix
 
     status = jobs.read_status(job_id)
     data = jobs.read_segments(job_id)
@@ -634,30 +572,17 @@ def _do_voices(job_id: str, report: Callable[[float], None]) -> None:
     for seg in data["segments"]:  # texte corrigé depuis : la phrase repart en mode normal (expressif)
         if seg.get("stabiliser") and deja.get(str(seg["id"]), {}).get("texte") != seg["traduction"]:
             seg.pop("stabiliser")
-    def empreinte_fichier(ident: int):
-        fichier = fichier_brut(dossier, ident)
-        return fichier.stat().st_mtime_ns if fichier.is_file() else None
-
-    avant = {s["id"]: empreinte_fichier(s["id"]) for s in data["segments"]}
     generees = generer_voix(data["segments"], status["langue_cible"], voix, dossier,
-                            on_progress=_sous_progression(report, 0.02, 0.75))
+                            on_progress=_sous_progression(report, 0.02, 0.85))
     # Chaque voix clonée doit ressembler à son locuteur : les phrases au timbre dérivé sont refaites
     ressemblances = _verifier_ressemblance(job_id, data["segments"], par_locuteur, voix, status["langue_cible"],
-                                           dossier, _sous_progression(report, 0.75, 0.85))
-    # Chaque phrase générée à l'instant doit dire son texte : écoute de contrôle, reprise si besoin
-    nouvelles = {s["id"] for s in data["segments"] if empreinte_fichier(s["id"]) != avant[s["id"]]}
-    fidelites = _verifier_ecoute(job_id, data["segments"], voix, status["langue_cible"], dossier, nouvelles,
-                                 _sous_progression(report, 0.85, 1.0))
+                                           dossier, _sous_progression(report, 0.85, 1.0))
     stabilisees = {s["id"] for s in data["segments"] if s.get("stabiliser")}
     # Voix réellement utilisée pour chaque locuteur : l'interface signale un changement non généré
     data = jobs.read_segments(job_id)
     for seg in data["segments"]:
         if seg["id"] in ressemblances:
             seg["ressemblance"] = ressemblances[seg["id"]]
-        if seg["id"] in fidelites:
-            seg["fidelite"] = fidelites[seg["id"]]
-        elif seg["id"] in nouvelles:
-            seg.pop("fidelite", None)  # nouvelle voix non écoutée (phrase trop courte) : ancienne mesure caduque
         if seg["id"] in stabilisees:
             seg["stabiliser"] = True  # gardé : la phrase reste « à jour » pour le cache des voix
         else:
@@ -669,13 +594,6 @@ def _do_voices(job_id: str, report: Callable[[float], None]) -> None:
     data["locuteurs"] = fiche
     jobs.write_segments(job_id, data)
     jobs.update_status(job_id, voix_generees=generees)
-    # Débit réel des voix : les prochaines estimations de durée (trop longue, trop courte) en tiennent compte
-    from pipeline.calibrage import apprendre, mesurer_projet
-
-    try:
-        apprendre(status["langue_cible"], mesurer_projet(data["segments"], status["langue_cible"], dossier))
-    except Exception:  # le calibrage ne doit jamais faire échouer le doublage
-        logger.exception("[%s] Calibrage du débit des voix", job_id)
 
 
 def _ajouter_intonation(job_id: str, status: dict, data: dict, par_locuteur: dict[str, str]) -> None:
@@ -701,42 +619,6 @@ def _ajouter_intonation(job_id: str, status: dict, data: dict, par_locuteur: dic
     logger.info("[%s] Intonation d'origine pour %d phrase(s)", job_id, n)
 
 
-def _egalisation_sure(phrases: list[dict], filtre: str, dossier, reference) -> bool:
-    """La voix égalisée ressemble-t-elle au moins autant au locuteur que la voix brute ? (empreinte vocale,
-    sur ses phrases les plus longues). Sans le modèle d'empreinte, l'égalisation est gardée."""
-    import subprocess
-    import tempfile
-    from pathlib import Path
-
-    import numpy as np
-
-    from pipeline.extract import _require
-    from pipeline.ressemblance import _lire, modele_empreinte, ressemblance_fichier
-    from pipeline.voice import fichier_brut
-
-    longues = sorted((s for s in phrases if fichier_brut(dossier, s["id"]).is_file()),
-                     key=lambda s: s["fin"] - s["debut"], reverse=True)[:4]
-    if not longues or not Path(reference).is_file():
-        return True
-    with modele_empreinte() as empreinte, tempfile.TemporaryDirectory(prefix="voxlingo-timbre-") as temp:
-        if empreinte is None:
-            return True
-        cible = empreinte(_lire(Path(reference)))
-        if cible is None:
-            return True
-        brutes, egalisees = [], []
-        for s in longues:
-            brut = fichier_brut(dossier, s["id"])
-            egalise = Path(temp) / brut.name
-            subprocess.run([_require("ffmpeg"), "-y", "-v", "error", "-i", str(brut), "-af", filtre, str(egalise)],
-                           capture_output=True)
-            a, b = ressemblance_fichier(brut, cible, empreinte), ressemblance_fichier(egalise, cible, empreinte)
-            if a is not None and b is not None:
-                brutes.append(a)
-                egalisees.append(b)
-    return not brutes or float(np.median(egalisees)) >= float(np.median(brutes)) - 0.01
-
-
 def _do_export(job_id: str, report: Callable[[float], None]) -> None:
     """Cale chaque voix sur son temps, construit la piste doublée et exporte vidéo et sous-titres."""
     from pipeline.align import caler
@@ -752,9 +634,10 @@ def _do_export(job_id: str, report: Callable[[float], None]) -> None:
     duree = status.get("duree_s") or data.get("duree_s")
     marquer_fin_max(data["segments"], duree)
 
-    # Fidélité à la voix d'origine : volume au décibel près, et timbre rapproché de la voix d'origine du
-    # locuteur (pipeline/timbre_eq.py : mesuré de 100 Hz à 6,3 kHz, là où la voix isolée est fidèle) ; la
-    # correction n'est gardée que si la voix ressemble au moins autant au locuteur (_egalisation_sure).
+    # Fidélité à la voix d'origine : volume au décibel près ; égalisation du timbre seulement sur demande
+    # (EGALISATION_TIMBRE=true) : le clonage reproduit déjà le timbre de l'échantillon, et corriger encore
+    # vers la piste « voix isolée » (réverbération, résidus de musique, aigus atténués par la séparation)
+    # recolorait les voix au point de ne plus ressembler aux locuteurs d'origine.
     from config import get_settings
     from pipeline.niveau import lire_extrait, niveau_actif_db
     from pipeline.timbre_eq import correction_locuteur, filtre_ffmpeg
@@ -762,29 +645,17 @@ def _do_export(job_id: str, report: Callable[[float], None]) -> None:
 
     voix_isolee = folder / "voix_isolee.wav"
     egaliseurs: dict[str, str | None] = {}
-
-    def reference_du_locuteur(code: str):
-        """Échantillon de clonage actuel, ou celui d'une version précédente (voix pas encore refaites)."""
-        actuel = fichier_reference(dossier, code)
-        # « reference_v3_X.wav » passe avant « reference_X.wav » (première version, sans numéro)
-        return actuel if actuel.is_file() else max(dossier.glob(f"reference*_{code}.wav"), default=None)
-
     if voix_isolee.is_file() and get_settings().egalisation_timbre:
         for code, infos in jobs.locuteurs(data).items():
             phrases = [s for s in data["segments"] if jobs.locuteur(s) == code]
             clone = (infos.get("voix_generee", infos.get("voix")) == "clone"
                      and sum(s["fin"] - s["debut"] for s in phrases) >= REFERENCE_MIN_LOCUTEUR_S
-                     and reference_du_locuteur(code) is not None)
+                     and fichier_reference(dossier, code).is_file())
             if not clone:
                 continue  # voix de la bibliothèque : son timbre est choisi, pas recopié
             gains = correction_locuteur(voix_isolee, phrases, [fichier_brut(dossier, s["id"]) for s in phrases])
-            filtre = filtre_ffmpeg(gains)
-            if filtre and not _egalisation_sure(phrases, filtre, dossier, reference_du_locuteur(code)):
-                logger.info("[%s] Timbre de %s : correction écartée (la voix ressemblerait moins au locuteur)",
-                            job_id, code)
-                filtre = None
-            egaliseurs[code] = filtre
-            if filtre:
+            egaliseurs[code] = filtre_ffmpeg(gains)
+            if gains is not None:
                 logger.info("[%s] Timbre de %s : correction %s dB", job_id, code,
                             " ".join(f"{g:+.0f}" for g in gains))
     report(0.05)
@@ -810,16 +681,8 @@ def _do_export(job_id: str, report: Callable[[float], None]) -> None:
     if options.get("conserver_fond", True):
         from pipeline.separate import separer
 
-        from pipeline.assemble import residu_hors_parole
-
-        voix_origine, fond = separer(folder / status["fichier"], folder)  # projets créés avant la phase 5
-        # Sons d'origine pris pour de la voix par la séparation (rires, cris, bruitages), rendus au fond
-        # là où personne ne parle
-        residu = residu_hors_parole(voix_origine, [(s["debut"], s["fin"]) for s in data["segments"]],
-                                    folder / "residu_fond.wav")
-        mixer_fond(folder / "voix_doublee.wav", fond, int(options.get("volume_fond", 100)), folder / "doublage.wav",
-                   residu)
-        residu.unlink(missing_ok=True)
+        _, fond = separer(folder / status["fichier"], folder)  # projets créés avant la phase 5
+        mixer_fond(folder / "voix_doublee.wav", fond, int(options.get("volume_fond", 100)), folder / "doublage.wav")
     else:
         (folder / "voix_doublee.wav").replace(folder / "doublage.wav")
     report(0.7)
@@ -855,8 +718,6 @@ def run_voices(job_id: str) -> None:
         if not options.get("synchro_labiale"):
             jobs.update_step(job_id, "synchro_labiale", etat="ignore")
         else:
-            # Le doublage est prêt : sauvegardé avant la synchro, longue, qu'une fin de séance peut couper
-            sauvegarde.apres_export(job_id)
             _synchro_labiale(job_id)
 
     _guarded(job_id, body, etat_final="termine")
@@ -904,28 +765,6 @@ def _do_lipsync(job_id: str, report: Callable[[float], None]) -> None:
     resultat.unlink(missing_ok=True)
     apercu_navigateur(cible, folder / "apercu_synchro.mp4")
     jobs.update_status(job_id, synchro_importee=True, synchro_moteur=True, synchro_erreur=None)
-
-
-def run_remix(job_id: str) -> None:
-    """Refait le mixage du son avec les voix déjà générées (calage, timbre, volume, fond sonore), sans les
-    régénérer. Une vidéo synchronisée aux lèvres reçoit le nouveau son sans être recalculée."""
-    from pipeline.format import apercu_navigateur, exporter_meme_format
-
-    invalider_habillage(job_id)
-
-    def body() -> None:
-        _run_step(job_id, "export", lambda report: _do_export(job_id, report))
-        status = jobs.read_status(job_id) or {}
-        folder = jobs.project_dir(job_id)
-        synchro = next(folder.glob("doublage_synchro.*"), None) if status.get("synchro_importee") else None
-        if synchro is not None:
-            remise = synchro.with_name(f"synchro_remixee{synchro.suffix}")
-            exporter_meme_format(synchro, folder / "doublage.wav", remise)  # image copiée, nouveau son
-            remise.replace(synchro)
-            apercu_navigateur(synchro, folder / "apercu_synchro.mp4")
-
-    _guarded(job_id, body, etat_final="termine")
-    _habiller_si_termine(job_id)
 
 
 def run_lipsync(job_id: str) -> None:

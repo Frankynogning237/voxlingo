@@ -73,10 +73,6 @@ export type BilanAjustement = {
   silence: number
   raccourcies: number
   decoupees: number
-  /** Phrases longues calées morceau par morceau sur les pauses d'origine */
-  calees?: number
-  /** Traductions trop courtes reformulées un peu plus longuement */
-  allongees?: number
   a_revoir: number
 }
 
@@ -218,11 +214,7 @@ export type Segment = {
   traduction_ia?: string
   trop_long?: boolean
   fin_max?: number
-  ajustement?: 'raccourcie' | 'decoupee' | 'calee' | 'allongee' | 'a_revoir'
-  /** Ajustement de durée utile à cette phrase (elle tient dans son temps, mais ne colle pas à la scène) */
-  duree_a_ajuster?: 'caler' | 'allonger' | null
-  /** Écoute de contrôle : ressemblance (0 à 1) entre ce que dit la voix générée et son texte */
-  fidelite?: number
+  ajustement?: 'raccourcie' | 'decoupee' | 'a_revoir'
   duree_doublage?: number
   facteur_voix?: number
   locuteur?: string
@@ -249,8 +241,6 @@ export type Transcription = {
   locuteurs?: Record<string, { nom: string; couleur: string; voix?: string }>
   fiche?: FicheVideo | null
   scenes?: Scene[]
-  /** Durée réelle / durée estimée des voix dans cette langue (calibrage appris sur les voix générées) */
-  facteur_debit?: number
 }
 
 async function request<T>(path: string): Promise<T> {
@@ -540,8 +530,6 @@ export async function importLipsync(id: string, video: File): Promise<Job> {
 export const removeLipsync = (id: string) => send<Job>(`/jobs/${id}/synchro`, 'DELETE')
 /** Synchronisation labiale par le moteur lui-même (GPU Kaggle/Colab, MuseTalk). */
 export const lipsyncEngine = (id: string) => send<Job>(`/jobs/${id}/synchroniser`, 'POST')
-/** Refait le mixage du son (volume et timbre calés sur la voix d'origine, fond complet) sans régénérer les voix. */
-export const remixAudio = (id: string) => send<Job>(`/jobs/${id}/mixage`, 'POST')
 
 // ───────────────────────── Habillage de la vidéo exportée ─────────────────────────
 
@@ -559,9 +547,5 @@ export async function dressingPreview(id: string, reglages: Habillage, instant: 
   if (!res.ok) throw new Error((await res.json().catch(() => null))?.detail ?? `Erreur serveur (${res.status})`)
   return URL.createObjectURL(await res.blob())
 }
-
-/** Zone des anciens sous-titres incrustés, trouvée automatiquement (null si aucun sous-titre). */
-export const detectOldSubtitles = (id: string) =>
-  send<{ zone: Habillage['zone'] | null }>(`/jobs/${id}/habillage/zone`, 'POST')
 
 export const LIBELLES_AGE: Record<AgeVoix, string> = { enfant: 'Enfant', jeune: 'Jeune', adulte: 'Adulte', senior: 'Senior' }

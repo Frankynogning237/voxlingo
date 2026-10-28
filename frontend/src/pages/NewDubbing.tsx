@@ -650,8 +650,8 @@ export function NewDubbing() {
             />
             <OptionCard
               icon={<Scissors className="size-6" />}
-              label="Ajuster la durée des phrases"
-              aide="Après la traduction, chaque phrase est calée sur sa scène : phrase trop longue raccourcie ou découpée, phrase longue calée morceau par morceau sur les pauses d'origine, traduction trop courte reformulée un peu plus longuement."
+              label="Ajuster les phrases trop longues"
+              aide="Après la traduction, chaque phrase trop longue pour son temps est réglée automatiquement : utilisation du silence qui suit, version plus courte proposée par l'IA, ou découpage en morceaux aux pauses naturelles."
               checked={options.ajuster_trop_longs}
               onChange={(v) => setOption('ajuster_trop_longs', v)}
             />

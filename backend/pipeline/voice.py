@@ -67,30 +67,8 @@ def fichier_reference(dossier: Path, code: str) -> Path:
     l'échantillon s'améliore : les anciens échantillons sont refaits, et les voix clonées avec eux
     régénérées (le chemin fait partie de la voix, voir Manifeste).
     v2 : extraits gardés tels quels (plus de renormalisation un à un ni d'écrêtage) ;
-    v3 : extraits choisis d'après leur ressemblance vocale avec le locuteur, le plus représentatif en tête ;
-    v4 : extraits découpés au minutage des mots (sans silences internes, respirations ni bruits de fin)."""
-    return dossier / f"reference_v4_{code}.wav"
-
-
-PAUSE_INTERNE_S = 0.35  # silence retiré de l'échantillon (au-delà, ce n'est plus de la voix)
-MARGE_ATTAQUE_S, MARGE_FIN_S = 0.06, 0.12  # le minutage des mots de Whisper coupe parfois un peu tôt
-
-
-def passages_parles(seg: dict[str, Any]) -> list[tuple[float, float]]:
-    """Passages réellement parlés d'une phrase, d'après le minutage de ses mots : les silences internes
-    (pause, respiration, bruit) sont retirés, chaque passage garde une petite marge autour des mots.
-    Sans minutage des mots, la phrase entière."""
-    mots = [m for m in seg.get("mots") or [] if m.get("fin", 0) > m.get("debut", 0)]
-    if not mots:
-        return [(seg["debut"], seg["fin"])]
-    passages: list[list[float]] = []
-    for mot in mots:
-        if passages and mot["debut"] - passages[-1][1] <= PAUSE_INTERNE_S:
-            passages[-1][1] = max(passages[-1][1], mot["fin"])
-        else:
-            passages.append([mot["debut"], mot["fin"]])
-    return [(max(seg["debut"], a - MARGE_ATTAQUE_S), min(seg["fin"] + MARGE_FIN_S, b + MARGE_FIN_S))
-            for a, b in passages]
+    v3 : extraits choisis d'après leur ressemblance vocale avec le locuteur, le plus représentatif en tête."""
+    return dossier / f"reference_v3_{code}.wav"
 
 
 def choisir_extraits(segments: list[dict[str, Any]], autres: list[dict[str, Any]] | None = None,
@@ -110,7 +88,7 @@ def choisir_extraits(segments: list[dict[str, Any]], autres: list[dict[str, Any]
         return not any(a["debut"] < seg["fin"] + MARGE_CHEVAUCHEMENT_S and a["fin"] > seg["debut"] - MARGE_CHEVAUCHEMENT_S
                        for a in autres or [])
 
-    longueur = lambda s: sum(f - d for d, f in passages_parles(s))  # noqa: E731 — voix réellement entendue
+    longueur = lambda s: s["fin"] - s["debut"]  # noqa: E731
     scores = scores or {}
     bonnes = [s for s in segments if 1.5 <= longueur(s) <= 12]
     if scores:
@@ -152,24 +130,16 @@ def extraire_reference(video: Path, segments: list[dict[str, Any]], sortie: Path
         raise VoiceError("Aucune parole exploitable pour cloner la voix.")
 
     morceaux = []
-    fondu = int(0.01 * TAUX)  # 10 ms : pas de clic aux coupures
     for seg in choisis:
-        for debut, fin in passages_parles(seg):
-            resultat = subprocess.run(
-                [_require("ffmpeg"), "-v", "error", "-ss", f"{debut:.3f}", "-to", f"{fin:.3f}",
-                 "-i", str(video), "-vn", "-ac", "1", "-ar", str(TAUX), "-af", "highpass=f=70",
-                 "-f", "s16le", "-"],
-                capture_output=True,
-            )
-            if resultat.returncode != 0 or not resultat.stdout:
-                continue
-            extrait = np.frombuffer(resultat.stdout, dtype=np.int16).astype(np.float32) / 32768
-            if extrait.size > 2 * fondu:
-                rampe = np.linspace(0.0, 1.0, fondu, dtype=np.float32)
-                extrait[:fondu] *= rampe
-                extrait[-fondu:] *= rampe[::-1]
-            morceaux.append(extrait)
-            morceaux.append(np.zeros(int(0.2 * TAUX), dtype=np.float32))  # courte pause entre passages
+        resultat = subprocess.run(
+            [_require("ffmpeg"), "-v", "error", "-ss", f"{seg['debut']:.2f}", "-to", f"{seg['fin']:.2f}",
+             "-i", str(video), "-vn", "-ac", "1", "-ar", str(TAUX), "-af", "highpass=f=70",
+             "-f", "s16le", "-"],
+            capture_output=True,
+        )
+        if resultat.returncode == 0 and resultat.stdout:
+            morceaux.append(np.frombuffer(resultat.stdout, dtype=np.int16).astype(np.float32) / 32768)
+            morceaux.append(np.zeros(int(0.25 * TAUX), dtype=np.float32))  # courte pause entre extraits
     if not morceaux:
         raise VoiceError("Impossible d'extraire l'échantillon de voix d'origine.")
     echantillon = np.concatenate(morceaux)
@@ -181,8 +151,8 @@ def extraire_reference(video: Path, segments: list[dict[str, Any]], sortie: Path
     if crete > CRETE_REFERENCE:  # plutôt baisser le tout qu'écrêter
         echantillon = echantillon * (CRETE_REFERENCE / crete)
     sf.write(sortie, echantillon, TAUX, subtype="PCM_16")
-    logger.info("Échantillon de référence : %.1f s de voix (%d phrases)",
-                sum(f - d for s in choisis for d, f in passages_parles(s)), len(choisis))
+    logger.info("Échantillon de référence : %.1f s (%d extraits)",
+                sum(s["fin"] - s["debut"] for s in choisis), len(choisis))
     return sortie
 
 

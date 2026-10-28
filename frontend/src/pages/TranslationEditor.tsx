@@ -8,7 +8,6 @@ import {
   Check,
   CircleCheck,
   Clapperboard,
-  Timer,
   EllipsisVertical,
   Pause,
   Play,
@@ -154,9 +153,8 @@ const CAPACITE: Record<StrategieDuree, number> = {
  * Vrai si la voix doublée ne tient pas dans le temps disponible (durée de la phrase + silence
  * avant la suivante) sans dépasser l'accélération permise par la stratégie choisie.
  */
-function tropLong(seg: Segment, traduction: string, strategie: StrategieDuree, cible?: string | null, facteur = 1) {
-  // `facteur` : débit réel des voix mesuré dans cette langue (backend/pipeline/calibrage.py)
-  const dureeVoix = (syllabes(traduction) / (debit(cible) * FACTEUR_DEBIT_XTTS)) * facteur
+function tropLong(seg: Segment, traduction: string, strategie: StrategieDuree, cible?: string | null) {
+  const dureeVoix = syllabes(traduction) / (debit(cible) * FACTEUR_DEBIT_XTTS)
   const disponible = Math.max((seg.fin_max ?? seg.fin) - seg.debut, 0.1)
   return dureeVoix / disponible > CAPACITE[strategie]
 }
@@ -308,34 +306,8 @@ function BadgeEmotion({ emotion, onChange }: { emotion: EmotionPhrase; onChange:
 const LIBELLES_AJUSTEMENT = {
   raccourcie: { texte: 'Reformulée', aide: "Traduction reformulée plus brièvement par l'IA, dans le même sens, pour tenir dans le temps." },
   decoupee: { texte: 'Découpée', aide: 'Phrase redécoupée aux pauses naturelles, chaque morceau calé sur son moment.' },
-  calee: {
-    texte: 'Calée',
-    aide: "Phrase longue découpée aux pauses de la voix d'origine : la voix doublée repart avec le personnage après chaque pause.",
-  },
-  allongee: {
-    texte: 'Allongée',
-    aide: "Traduction trop courte pour la scène, reformulée un peu plus longuement par l'IA, dans le même sens.",
-  },
   a_revoir: { texte: 'À revoir', aide: 'Aucun ajustement automatique ne suffit : raccourcissez cette traduction à la main.' },
 } as const
-
-/** Phrases qui tiennent dans leur temps mais ne collent pas à la scène : ce qu'« Ajuster » ferait. */
-const LIBELLES_DUREE = {
-  caler: {
-    texte: 'À caler',
-    aide: "Phrase longue : « Ajuster » la découpera aux pauses de la voix d'origine, pour que la voix doublée reparte avec le personnage après chaque pause.",
-  },
-  allonger: {
-    texte: 'Trop courte',
-    aide: "La voix s'arrêterait alors que le personnage parle encore : « Ajuster » fera reformuler la traduction un peu plus longuement, dans le même sens.",
-  },
-} as const
-
-/** Sous ce seuil (backend/pipeline/ecoute.py), la voix générée ne dit pas exactement son texte. */
-const FIDELITE_MIN = 0.65
-
-/** La phrase gagnerait à être ajustée sans être trop longue (calée sur les pauses, ou allongée). */
-const dureeAAjuster = (s: Segment, modifiee: boolean) => (!modifiee && s.duree_a_ajuster ? LIBELLES_DUREE[s.duree_a_ajuster] : null)
 
 /** Bilan du dernier ajustement automatique des phrases trop longues. */
 function BilanBandeau({ bilan, onClose }: { bilan: BilanAjustement; onClose: () => void }) {
@@ -343,10 +315,6 @@ function BilanBandeau({ bilan, onClose }: { bilan: BilanAjustement; onClose: () 
     bilan.silence > 0 && `${bilan.silence} tiennent grâce au silence suivant`,
     bilan.raccourcies > 0 && `${bilan.raccourcies} reformulée${bilan.raccourcies > 1 ? 's' : ''} par l'IA`,
     bilan.decoupees > 0 && `${bilan.decoupees} découpée${bilan.decoupees > 1 ? 's' : ''} en morceaux`,
-    (bilan.calees ?? 0) > 0 &&
-      `${bilan.calees} longue${(bilan.calees ?? 0) > 1 ? 's' : ''} calée${(bilan.calees ?? 0) > 1 ? 's' : ''} sur les pauses d'origine`,
-    (bilan.allongees ?? 0) > 0 &&
-      `${bilan.allongees} trop courte${(bilan.allongees ?? 0) > 1 ? 's' : ''} allongée${(bilan.allongees ?? 0) > 1 ? 's' : ''}`,
   ].filter(Boolean)
   return (
     <motion.div
@@ -455,7 +423,7 @@ function SegmentRow({
   onRefaire,
 }: {
   seg: Segment
-  langues: { source?: string | null; cible?: string | null; strategie: StrategieDuree; facteur?: number }
+  langues: { source?: string | null; cible?: string | null; strategie: StrategieDuree }
   traduction: string
   selectionne: boolean
   enLecture: boolean
@@ -477,10 +445,8 @@ function SegmentRow({
   onRefaire: () => void
 }) {
   const [menu, setMenu] = useState(false)
-  const alerte = tropLong(seg, traduction, langues.strategie, langues.cible, langues.facteur)
+  const alerte = tropLong(seg, traduction, langues.strategie, langues.cible)
   const ajustement = seg.ajustement && seg.ajustement !== 'a_revoir' && !modifie ? LIBELLES_AJUSTEMENT[seg.ajustement] : null
-  const voixInfidele = !alerte && !modifie && seg.fidelite !== undefined && seg.fidelite < FIDELITE_MIN
-  const duree = alerte || voixInfidele ? null : dureeAAjuster(seg, modifie)
   return (
     <motion.div
       variants={cardVariants}
@@ -527,29 +493,7 @@ function SegmentRow({
               <TriangleAlert className="size-3.5" /> Trop long
             </motion.span>
           )}
-          {voixInfidele && (
-            <motion.span
-              initial={{ opacity: 0, y: 4 }}
-              animate={{ opacity: 1, y: 0 }}
-              title={`La voix générée ne dit pas exactement son texte (mots sautés ou déformés, fidélité ${Math.round(
-                (seg.fidelite ?? 0) * 100,
-              )} %), même après une reprise automatique. Écoutez-la, puis « Refaire la voix de cette phrase » ou reformulez.`}
-              className="flex items-center gap-1.5 rounded-full border border-rose-400/60 bg-rose-400/10 px-3 py-1 text-[13px] whitespace-nowrap text-rose-200"
-            >
-              <Volume2 className="size-3.5" /> Voix à vérifier
-            </motion.span>
-          )}
-          {duree && (
-            <motion.span
-              initial={{ opacity: 0, y: 4 }}
-              animate={{ opacity: 1, y: 0 }}
-              title={duree.aide}
-              className="flex items-center gap-1.5 rounded-full border border-violet-400/50 bg-violet-400/10 px-3 py-1 text-[13px] whitespace-nowrap text-violet-200"
-            >
-              <Timer className="size-3.5" /> {duree.texte}
-            </motion.span>
-          )}
-          {!alerte && !voixInfidele && !duree && ajustement && (
+          {!alerte && ajustement && (
             <motion.span
               initial={{ opacity: 0, y: 4 }}
               animate={{ opacity: 1, y: 0 }}
@@ -559,7 +503,7 @@ function SegmentRow({
               <Scissors className="size-3.5" /> {ajustement.texte}
             </motion.span>
           )}
-          {!alerte && !voixInfidele && !duree && !ajustement && !modifie && seg.ton && (
+          {!alerte && !ajustement && !modifie && seg.ton && (
             <BadgeTon ton={seg.ton} corrige={!!seg.ton_corrige} onChange={onTone} />
           )}
           {!alerte && !ajustement && modifie && (
@@ -616,13 +560,13 @@ function SegmentRow({
               </button>
               <button
                 type="button"
-                disabled={!alerte && !duree}
+                disabled={!alerte}
                 onClick={(e) => {
                   e.stopPropagation()
                   onAdjust()
                   setMenu(false)
                 }}
-                title={alerte || duree ? undefined : 'Cette phrase est déjà calée sur sa scène.'}
+                title={alerte ? undefined : "Cette phrase tient déjà dans son temps."}
                 className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-[14px] text-white hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 <Scissors className="size-4" /> Ajuster cette phrase
@@ -701,13 +645,8 @@ export function TranslationEditor({ job }: { job: Job }) {
   // Phrases dont le texte d'origine a été corrigé : leur traduction est à refaire
   const aRetraduire = segments.filter((s) => s.a_retraduire || originalModifie(s)).map((s) => s.id)
   const strategie: StrategieDuree = job.options?.strategie_duree ?? 'reformuler'
-  const langues = { source: data?.langue ?? job.langue_source, cible: job.langue_cible, strategie, facteur: data?.facteur_debit ?? 1 }
-  const nbTropLongs = segments.filter((s) => tropLong(s, traductions[s.id], strategie, langues.cible, langues.facteur)).length
-  // Phrases qui tiennent mais ne collent pas à leur scène (longues à caler, trop courtes)
-  const nbDurees = segments.filter(
-    (s) => !tropLong(s, traductions[s.id], strategie, langues.cible, langues.facteur) && dureeAAjuster(s, traductions[s.id] !== s.traduction),
-  ).length
-  const nbAAjuster = nbTropLongs + nbDurees
+  const langues = { source: data?.langue ?? job.langue_source, cible: job.langue_cible, strategie }
+  const nbTropLongs = segments.filter((s) => tropLong(s, traductions[s.id], strategie, langues.cible)).length
   const vide = segments.some((s) => !traductions[s.id]?.trim())
 
   const appliquer = (nouvelles: Transcription) => {
@@ -959,26 +898,20 @@ export function TranslationEditor({ job }: { job: Job }) {
         )}
         <button
           type="button"
-          disabled={occupe || nbAAjuster === 0}
+          disabled={occupe || nbTropLongs === 0}
           onClick={() => ajuster.mutate(undefined)}
           title={
-            nbAAjuster === 0
-              ? 'Toutes les phrases sont calées sur leur scène'
-              : (strategie === 'reformuler'
-                  ? "Phrases trop longues reformulées plus brièvement par l'IA"
-                  : "Phrases trop longues : silence suivant, version plus courte ou découpage aux pauses") +
-                " ; phrases longues calées sur les pauses d'origine ; traductions trop courtes allongées"
+            nbTropLongs === 0
+              ? 'Aucune phrase trop longue'
+              : strategie === 'reformuler'
+                ? "L'IA reformule plus brièvement, dans le même sens, les phrases qui ne tiennent pas au débit naturel"
+                : "Silence suivant, version plus courte proposée par l'IA, ou découpage aux pauses naturelles"
           }
           className="flex h-11 items-center gap-2.5 rounded-xl border border-cyan-400/40 px-5 text-[15px] text-white transition-colors duration-200 hover:border-cyan-300/80 disabled:opacity-45"
         >
           <Scissors className="size-5 text-cyan-300" /> Ajuster automatiquement
           {nbTropLongs > 0 && (
             <span className="rounded-full bg-warning px-2 text-[12px] font-semibold text-black">{nbTropLongs}</span>
-          )}
-          {nbDurees > 0 && (
-            <span className="rounded-full bg-violet-400/80 px-2 text-[12px] font-semibold text-black" title="Phrases à caler ou trop courtes">
-              {nbDurees}
-            </span>
           )}
         </button>
         <button

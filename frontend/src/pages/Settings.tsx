@@ -187,7 +187,7 @@ export function Settings() {
         <Carte icone={<Box className="size-7" strokeWidth={1.5} />} titre="Modèles IA">
           <Choix
             libelle="Modèle de transcription"
-            aide="Whisper : plus le modèle est grand, plus la transcription est précise, mais lente. « Automatique » utilise Large V3 Turbo, bien plus fidèle ; sur un simple processeur, « Small » transcrit environ 1,7 fois plus vite, au prix de contresens."
+            aide="Whisper : plus le modèle est grand, plus la transcription est précise, mais lente. « Small » convient au processeur."
             valeur={valeurs.whisper_model}
             options={choix.transcription}
             onChange={(v) => set('whisper_model', v)}

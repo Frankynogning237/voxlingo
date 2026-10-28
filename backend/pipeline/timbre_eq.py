@@ -7,12 +7,9 @@ locuteur (piste « voix isolée ») et celui de ses voix générées, par tiers 
 
 - la correction est centrée (moyenne nulle) : elle change la couleur, pas le volume, calé ensuite
   au décibel près (pipeline/niveau.py) ;
-- elle n'est mesurée que de 100 Hz à 6,3 kHz : au-delà, la séparation voix / fond assourdit la voix
-  d'origine (aigus) ou y laisse de la musique (graves), et copier ce défaut ternirait la voix doublée ;
-  hors de cette plage, la correction des bords est prolongée (en plateau) ;
-- elle est légèrement lissée (bande voisine à 20 %) et plafonnée à ±9 dB ;
-- elle n'est gardée que si la voix égalisée ressemble au moins autant au locuteur que la voix brute
-  (empreinte vocale, pipeline/runner.py) : jamais de voix « recolorée » loin de l'original.
+- elle est lissée et plafonnée (±3 dB) : on rapproche la couleur sans toucher à la voix.
+
+Désactivée par défaut (réglage EGALISATION_TIMBRE) : le clonage reproduit déjà le timbre.
 
 Seules les trames où la voix est présente comptent ; la lecture se fait par extraits (mémoire bornée).
 """
@@ -27,8 +24,7 @@ import numpy as np
 # Centres des bandes en tiers d'octave, de 80 Hz à 10 kHz (les voix générées s'arrêtent à 12 kHz)
 BANDES_HZ = [80, 100, 125, 160, 200, 250, 315, 400, 500, 630, 800, 1000, 1250, 1600, 2000, 2500,
              3150, 4000, 5000, 6300, 8000, 10000]
-CORRECTION_MAX_DB = 9.0
-PLAGE_FIABLE_HZ = (100, 6300)  # où la voix isolée d'origine reflète fidèlement le timbre
+CORRECTION_MAX_DB = 3.0
 DUREE_MAX_S = 60.0  # durée de voix analysée par locuteur, de chaque côté
 FENETRE = 2048
 
@@ -78,20 +74,11 @@ def spectre_extraits(extraits: Iterable[tuple[np.ndarray, int]]) -> np.ndarray |
 
 
 def correction(origine: np.ndarray, generee: np.ndarray) -> np.ndarray:
-    """Gains (dB) par bande qui amènent la voix générée vers le timbre d'origine : mesurés dans la plage
-    fiable, lissés, centrés, plafonnés, et prolongés en plateau hors de cette plage."""
-    frequences = np.array(BANDES_HZ)
-    fiables = np.flatnonzero((frequences >= PLAGE_FIABLE_HZ[0]) & (frequences <= PLAGE_FIABLE_HZ[1]))
-    ecart = (origine - generee)[fiables]
-    # Lissage léger : le spectre moyen d'un locuteur est stable à ±1 dB sur une minute de voix, on peut le
-    # suivre de près sans corriger le hasard d'une bande
-    lisse = np.convolve(np.pad(ecart, 1, mode="edge"), np.array([0.2, 0.6, 0.2]), mode="valid")
-    centre = np.clip(lisse - np.mean(lisse), -CORRECTION_MAX_DB, CORRECTION_MAX_DB)
-    gains = np.empty(len(BANDES_HZ))
-    gains[fiables] = centre
-    gains[: fiables[0]] = centre[0]
-    gains[fiables[-1] + 1:] = centre[-1]
-    return gains
+    """Gains (dB) par bande qui amènent la voix générée vers le timbre d'origine : lissés, centrés, plafonnés."""
+    ecart = origine - generee
+    lisse = np.convolve(np.pad(ecart, 1, mode="edge"), np.ones(3) / 3, mode="valid")
+    centre = lisse - np.mean(lisse)
+    return np.clip(centre, -CORRECTION_MAX_DB, CORRECTION_MAX_DB)
 
 
 def filtre_ffmpeg(gains: np.ndarray | None) -> str | None:

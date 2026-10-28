@@ -70,56 +70,15 @@ def construire_piste(placements: list[tuple[float, Path]], duree_video: float, s
     return sortie
 
 
-MARGE_PAROLE_S = 0.25  # autour d'une phrase d'origine, le résidu reste coupé (attaques, fins de mots)
-FONDU_RESIDU_S = 0.08
-
-
-def residu_hors_parole(voix_isolee: Path, phrases: list[tuple[float, float]], sortie: Path) -> Path:
-    """Ce que la séparation a pris pour de la voix là où personne ne parle (rires, cris, bruitages,
-    ambiance) : la piste « voix isolée », coupée pendant chaque phrase d'origine (avec fondus).
-
-    Remixé avec le fond, il rend au doublage les sons d'origine que la séparation avait retirés, sans
-    jamais laisser entendre la voix d'origine sous la voix doublée. Lecture par blocs : mémoire bornée."""
-    with sf.SoundFile(voix_isolee) as entree:
-        taux, canaux = entree.samplerate, entree.channels
-        intervalles = sorted((max(0.0, a - MARGE_PAROLE_S), b + MARGE_PAROLE_S) for a, b in phrases)
-        fondu = max(1, int(FONDU_RESIDU_S * taux))
-        with sf.SoundFile(sortie, "w", samplerate=taux, channels=canaux, subtype="PCM_16") as fichier:
-            position = 0
-            for bloc in entree.blocks(blocksize=taux * 10, dtype="float32", always_2d=True):
-                t = (position + np.arange(len(bloc))) / taux
-                ouvert = np.ones(len(bloc), dtype=np.float32)
-                for a, b in intervalles:
-                    if b < t[0] - FONDU_RESIDU_S or a > t[-1] + FONDU_RESIDU_S:
-                        continue
-                    # 1 loin de la phrase, 0 pendant, rampes de FONDU_RESIDU_S de part et d'autre
-                    distance = np.maximum(a - t, t - b)
-                    ouvert = np.minimum(ouvert, np.clip(distance * taux / fondu, 0.0, 1.0))
-                fichier.write(bloc * ouvert[:, None])
-                position += len(bloc)
-    return sortie
-
-
-def mixer_fond(voix: Path, fond: Path, volume: int, sortie: Path, residu: Path | None = None) -> Path:
-    """Mixe la voix doublée (mono) avec le fond sonore d'origine (stéréo) au volume choisi (0 à 100 %).
-    `residu` (residu_hors_parole) complète le fond des sons que la séparation avait pris pour de la voix."""
-    niveau = f"{max(0, min(volume, 100)) / 100:.2f}"
-    entrees = ["-i", str(voix), "-i", str(fond)]
-    if residu is not None:
-        entrees += ["-i", str(residu)]
-        filtre = (
-            "[0:a]aresample=44100,pan=stereo|c0=c0|c1=c0[v];"
-            f"[1:a][2:a]amix=inputs=2:duration=first:normalize=0,volume={niveau}[f];"
-            "[v][f]amix=inputs=2:duration=first:normalize=0,alimiter=limit=0.95[m]"
-        )
-    else:
-        filtre = (
-            "[0:a]aresample=44100,pan=stereo|c0=c0|c1=c0[v];"
-            f"[1:a]volume={niveau}[f];"
-            "[v][f]amix=inputs=2:duration=first:normalize=0,alimiter=limit=0.95[m]"
-        )
+def mixer_fond(voix: Path, fond: Path, volume: int, sortie: Path) -> Path:
+    """Mixe la voix doublée (mono) avec le fond sonore d'origine (stéréo) au volume choisi (0 à 100 %)."""
+    filtre = (
+        "[0:a]aresample=44100,pan=stereo|c0=c0|c1=c0[v];"
+        f"[1:a]volume={max(0, min(volume, 100)) / 100:.2f}[f];"
+        "[v][f]amix=inputs=2:duration=first:normalize=0,alimiter=limit=0.95[m]"
+    )
     resultat = subprocess.run(
-        [_require("ffmpeg"), "-y", "-v", "error", *entrees,
+        [_require("ffmpeg"), "-y", "-v", "error", "-i", str(voix), "-i", str(fond),
          "-filter_complex", filtre, "-map", "[m]", "-c:a", "pcm_s16le", str(sortie)],
         capture_output=True, text=True,
     )

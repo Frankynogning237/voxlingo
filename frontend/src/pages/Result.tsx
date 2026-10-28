@@ -3,7 +3,6 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   ArrowLeftRight,
-  AudioLines,
   ChevronsLeftRight,
   CircleCheck,
   CirclePlay,
@@ -41,7 +40,6 @@ import {
   importLipsync,
   kaggleUrl,
   lipsyncEngine,
-  remixAudio,
   removeLipsync,
   subtitlesVttUrl,
   videoUrl,
@@ -434,29 +432,6 @@ function tempsTraitement(job: Job) {
   return m > 0 ? `≈ ${m} min ${s} s` : `≈ ${s} s`
 }
 
-/** Nouveau mixage du son avec les voix existantes (volume, timbre et fond calés sur l'original). */
-function RefaireMixage({ job }: { job: Job }) {
-  const queryClient = useQueryClient()
-  const mixage = useMutation({
-    mutationFn: () => remixAudio(job.id),
-    onSuccess: (j) => queryClient.setQueryData(['job', job.id], j),
-  })
-  return (
-    <>
-      <button
-        type="button"
-        onClick={() => mixage.mutate()}
-        disabled={mixage.isPending}
-        title="Volume et timbre de chaque voix calés au décibel près sur la voix d'origine, fond sonore d'origine complet. Les voix ne sont pas régénérées."
-        className="flex items-center justify-center gap-2 text-[14px] text-white/70 hover:text-white disabled:opacity-50"
-      >
-        <AudioLines className="size-4" /> {mixage.isPending ? 'Lancement…' : 'Refaire le mixage du son'}
-      </button>
-      {mixage.error && <p className="text-center text-[13px] text-destructive">{(mixage.error as Error).message}</p>}
-    </>
-  )
-}
-
 export function Result({ job }: { job: Job }) {
   const [piste, setPiste] = useState<Piste>('double')
   const sousTitres = job.options?.sous_titres ?? true
@@ -567,7 +542,6 @@ export function Result({ job }: { job: Job }) {
             >
               <PencilLine className="size-4" /> Modifier la traduction et régénérer
             </a>
-            <RefaireMixage job={job} />
           </div>
         </Panel>
       </div>

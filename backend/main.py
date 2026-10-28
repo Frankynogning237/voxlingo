@@ -101,15 +101,7 @@ def startup() -> None:
     logger.info("Démarrage : device=%s, mode=%s", runtime.device, runtime.mode)
     # Une tâche "en cours" au démarrage a été interrompue par l'arrêt du serveur
     for status in jobs.list_jobs():
-        if status["etat"] in ("en_attente", "en_cours") and jobs.doublage_pret(status):
-            # Coupé pendant la synchronisation labiale : le doublage, déjà exporté, reste utilisable
-            # (la synchro se relance depuis l'écran Résultat) au lieu de renvoyer à l'édition
-            jobs.update_step(status["id"], "synchro_labiale", etat="kaggle")
-            jobs.update_status(
-                status["id"], etat="termine", etape=None,
-                synchro_erreur="Synchronisation labiale interrompue par l'arrêt du moteur : relancez-la.",
-            )
-        elif status["etat"] in ("en_attente", "en_cours"):
+        if status["etat"] in ("en_attente", "en_cours"):
             jobs.update_status(
                 status["id"], etat="erreur",
                 erreur="Traitement interrompu par l'arrêt du serveur.",
@@ -303,16 +295,9 @@ def get_segments(job_id: str) -> dict:
         marquer_fin_max(data["segments"], status.get("duree_s"))  # projets créés avant l'ajustement
     from pipeline.voice import fichier_brut
 
-    from pipeline.calibrage import facteur
-    from pipeline.segments import besoin_ajustement
-
     dossier_voix = jobs.project_dir(job_id) / "voix"
-    cible = status.get("langue_cible")
-    data["facteur_debit"] = facteur(cible)  # débit réel des voix, pour les alertes en direct de l'éditeur
     for seg in data["segments"]:
         seg["voix_disponible"] = fichier_brut(dossier_voix, seg["id"]).is_file()
-        retouchee = seg.get("traduction") != seg.get("traduction_ia", seg.get("traduction"))
-        seg["duree_a_ajuster"] = None if retouchee else besoin_ajustement(seg, cible)
     return data
 
 
@@ -385,8 +370,6 @@ def save_translations(job_id: str, edition: EditionTraductions) -> dict:
         if seg["id"] in par_id:
             if not par_id[seg["id"]]:
                 raise HTTPException(400, f"La traduction du segment {seg['id'] + 1} est vide.")
-            if seg.get("traduction") != par_id[seg["id"]]:
-                seg.pop("allongement_essaye", None)
             seg["traduction"] = par_id[seg["id"]]
             correction = textes.get(seg["id"])
             if correction and correction != seg["texte"]:
@@ -588,20 +571,6 @@ async def import_lipsync(job_id: str, video: UploadFile = File(...)) -> dict:
     return _rehabiller(job_id, status)
 
 
-@app.post("/jobs/{job_id}/mixage")
-def remix_audio(job_id: str) -> dict:
-    """Refait le mixage du son avec les voix déjà générées : volume et timbre calés sur la voix d'origine,
-    fond sonore complet. Les voix ne sont pas régénérées."""
-    status = _get_status_or_404(job_id)
-    if status["etat"] in ("en_attente", "en_cours"):
-        raise HTTPException(409, "Un traitement est en cours : attendez sa fin.")
-    if not status.get("fichier_sortie") or not (jobs.project_dir(job_id) / "voix").is_dir():
-        raise HTTPException(409, "Générez d'abord les voix du projet.")
-    status = jobs.update_status(job_id, etat="en_attente")
-    jobs.start_remix(job_id)
-    return status
-
-
 @app.post("/jobs/{job_id}/synchroniser")
 def lipsync_engine(job_id: str) -> dict:
     """Synchronise les lèvres avec le moteur lui-même (MuseTalk sur GPU), sans passer par Kaggle à la main."""
@@ -726,20 +695,6 @@ def dressing_preview(job_id: str, demande: DemandeApercuHabillage) -> Response:
     return Response(image, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
 
-@app.post("/jobs/{job_id}/habillage/zone")
-def detect_old_subtitles(job_id: str) -> dict:
-    """Zone des anciens sous-titres incrustés, trouvée automatiquement sur la vidéo d'origine
-    ({"zone": null} si aucun sous-titre n'apparaît)."""
-    from pipeline.extract import FFmpegError
-    from pipeline.habillage import detecter_zone
-
-    status = _get_status_or_404(job_id)
-    try:
-        return {"zone": detecter_zone(jobs.project_dir(job_id) / status["fichier"])}
-    except FFmpegError as exc:
-        raise HTTPException(500, str(exc)) from None
-
-
 @app.get("/jobs/{job_id}/subtitles")
 def download_subtitles(job_id: str) -> FileResponse:
     """Sous-titres dans la langue cible (SRT)."""
@@ -849,9 +804,9 @@ def duplicate_job(job_id: str, demande: Duplication | None = None) -> dict:
 
 CHOIX_TRANSCRIPTION = [
     {"valeur": "auto", "libelle": "Automatique"},
-    {"valeur": "small", "libelle": "Whisper Small (rapide, moins précis)"},
+    {"valeur": "small", "libelle": "Whisper Small (rapide)"},
     {"valeur": "medium", "libelle": "Whisper Medium"},
-    {"valeur": "large-v3-turbo", "libelle": "Whisper Large V3 Turbo (précis, conseillé)"},
+    {"valeur": "large-v3-turbo", "libelle": "Whisper Large V3 Turbo"},
 ]
 CHOIX_TRADUCTION = [
     {"valeur": "auto", "libelle": "Automatique"},

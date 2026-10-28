@@ -1,4 +1,4 @@
-"""Ajustement automatique de la durée des phrases traduites.
+"""Ajustement automatique des phrases traduites trop longues.
 
 Pour chaque phrase dont la voix doublée ne tiendrait pas dans son temps disponible :
   1. le silence qui suit la phrase est déjà compté dans ce temps (pipeline/segments.py) ;
@@ -6,15 +6,6 @@ Pour chaque phrase dont la voix doublée ne tiendrait pas dans son temps disponi
   3. si cela ne suffit pas, on redécoupe la phrase originale aux pauses naturelles
      et on traduit chaque morceau, calé sur son propre moment.
 Les phrases qu'aucune solution ne règle restent signalées pour une correction à la main.
-
-Pour les phrases qui tiennent, mais dont la durée ne correspond pas à la scène :
-  - une phrase longue (scène de plusieurs secondes) est calée morceau par morceau sur les pauses
-    de la voix d'origine : la voix doublée repart avec le personnage après chaque pause, au lieu
-    d'être étirée ou compressée d'un bloc et de dériver au fil de la scène ;
-  - une traduction trop courte (la voix s'arrêterait alors que le personnage parle encore) est
-    reformulée un peu plus longuement par l'IA, dans le même sens.
-Une traduction corrigée à la main n'est jamais modifiée par ces deux ajustements, sauf si l'on
-demande l'ajustement de cette phrase précisément.
 """
 
 from __future__ import annotations
@@ -27,35 +18,24 @@ import httpx
 
 from config import get_runtime, get_settings
 from pipeline.segments import (
-    REMPLISSAGE_CIBLE,
-    besoin_ajustement,
     capacite,
     decouper,
-    est_trop_court,
     est_trop_long,
     marquer_fin_max,
     ratio_requis,
-    syllabes_pour_duree,
 )
 from pipeline.translate import (
     TranslationError,
     _decharger_ollama,
     _traduire_segment,
-    allonger,
     compter_syllabes,
-    meme_sens,
     ollama_disponible,
     raccourcir,
-    repartir,
-    traduction_suspecte,
 )
 
 logger = logging.getLogger("voxlingo.adjust")
 
 ESSAIS_REFORMULER = 3  # « reformuler » : la voix naturelle demande des phrases plus courtes
-ESSAIS_ALLONGER = 2
-# Ce que chaque morceau d'une phrase découpée garde de la phrase d'origine
-HERITAGE = ("locuteur", "ton", "ton_corrige", "emotion")
 
 
 def _syllabes_max(seg: dict[str, Any], traduction: str, source: str, cible: str, strategie: str) -> int:
@@ -77,70 +57,6 @@ def _raccourcir(client: httpx.Client, modele: str, seg: dict[str, Any], traducti
     return None
 
 
-def _allonger(client: httpx.Client, modele: str, seg: dict[str, Any], traduction: str,
-              source: str, cible: str, strategie: str) -> str | None:
-    """Fait reformuler une traduction trop courte un peu plus longuement, dans le même sens.
-
-    Renvoie la meilleure version obtenue (plus longue, qui tient toujours dans son temps et dont le
-    modèle confirme qu'elle dit la même chose que l'original), ou None si aucune n'améliore la phrase."""
-    cible_syllabes = syllabes_pour_duree((seg["fin"] - seg["debut"]) * REMPLISSAGE_CIBLE, cible)
-    meilleure, syllabes = None, compter_syllabes(traduction)
-    for _ in range(ESSAIS_ALLONGER):
-        longue = allonger(client, modele, seg["texte"], meilleure or traduction, source, cible,
-                          max(syllabes + 1, round(cible_syllabes * 0.9)), round(cible_syllabes * 1.05))
-        if (compter_syllabes(longue) <= syllabes or est_trop_long(seg, longue, source, cible, strategie)
-                or traduction_suspecte(seg["texte"], longue, source, cible)
-                or not meme_sens(client, modele, seg["texte"], longue, source, cible)):
-            continue
-        meilleure, syllabes = longue, compter_syllabes(longue)
-        if not est_trop_court(seg, longue, cible):
-            break
-    return meilleure
-
-
-def _traduire_morceaux(client: httpx.Client, modele: str, seg: dict[str, Any], morceaux: list[dict[str, Any]],
-                       source: str, cible: str, strategie: str, ajustement: str) -> list[dict[str, Any]]:
-    """Traduit chaque morceau d'une phrase découpée, calé sur son propre moment.
-
-    La traduction de la phrase entière est d'abord répartie entre les morceaux (sens et qualité de la
-    phrase complète conservés) ; à défaut, chaque morceau est traduit avec les précédents pour contexte."""
-    marquer_fin_max(morceaux, None)
-    morceaux[-1]["fin_max"] = seg.get("fin_max", seg["fin"])
-    reparties = repartir(client, modele, [m["texte"] for m in morceaux], seg["traduction"], source, cible) \
-        if seg.get("traduction") else None
-    traduits: list[str] = []
-    for k, morceau in enumerate(morceaux):
-        for cle in HERITAGE:
-            if cle in seg:
-                morceau[cle] = seg[cle]
-        texte = reparties[k] if reparties else _traduire_segment(client, modele, morceaux, k, source, cible, traduits)
-        if est_trop_long(morceau, texte, source, cible, strategie):
-            texte = _raccourcir(client, modele, morceau, texte, source, cible, strategie) or texte
-        traduits.append(texte)
-        morceau["traduction"] = texte
-        morceau["traduction_ia"] = texte
-        morceau["ajustement"] = ajustement
-    return morceaux
-
-
-def _a_traiter(seg: dict[str, Any], ids: set[int] | None, source: str, cible: str, strategie: str | None) -> str | None:
-    """Ce qu'il faut faire de cette phrase : « long » (trop longue), « caler », « allonger » ou None."""
-    if (ids is not None and seg["id"] not in ids) or not seg.get("traduction"):
-        return None
-    if est_trop_long(seg, seg["traduction"], source, cible, strategie):
-        return "long"
-    # Une traduction corrigée à la main n'est retouchée que si l'on demande cette phrase précisément
-    if ids is None and seg["traduction"] != seg.get("traduction_ia", seg["traduction"]):
-        return None
-    return besoin_ajustement(seg, cible, reessayer=ids is not None)
-
-
-def a_ajuster(segments: list[dict[str, Any]], source: str, cible: str, strategie: str | None,
-              ids: set[int] | None = None) -> bool:
-    """Au moins une phrase a besoin d'un ajustement de durée (trop longue, longue à caler, trop courte)."""
-    return any(_a_traiter(seg, ids, source, cible, strategie) for seg in segments)
-
-
 def ajuster_segments(
     data: dict[str, Any],
     source: str,
@@ -149,17 +65,16 @@ def ajuster_segments(
     on_progress: Callable[[float], None] | None = None,
     strategie: str | None = None,
 ) -> dict[str, int]:
-    """Ajuste la durée des phrases de `data["segments"]` (toutes, ou seulement `ids`).
+    """Ajuste les phrases trop longues de `data["segments"]` (toutes, ou seulement `ids`).
 
     `strategie` (« reformuler » ou « accelerer ») fixe à partir de quand une phrase est trop
     longue : dès qu'il faudrait accélérer la voix, ou seulement au-delà de l'accélération maximale.
 
-    Modifie `data` sur place et renvoie le bilan :
-    {silence, raccourcies, decoupees, calees, allongees, a_revoir}.
+    Modifie `data` sur place et renvoie le bilan : {silence, raccourcies, decoupees, a_revoir}.
     """
     segments: list[dict[str, Any]] = data["segments"]
     marquer_fin_max(segments, data.get("duree_s"))
-    bilan = {"silence": 0, "raccourcies": 0, "decoupees": 0, "calees": 0, "allongees": 0, "a_revoir": 0}
+    bilan = {"silence": 0, "raccourcies": 0, "decoupees": 0, "a_revoir": 0}
 
     # Phrases qui tiennent grâce au silence suivant (aucune modification nécessaire)
     for seg in segments:
@@ -168,8 +83,13 @@ def ajuster_segments(
             if hors_silence > capacite(strategie) and not est_trop_long(seg, seg["traduction"], source, cible, strategie):
                 bilan["silence"] += 1
 
-    actions = {i: a for i, seg in enumerate(segments) if (a := _a_traiter(seg, ids, source, cible, strategie))}
-    if not actions:
+    a_traiter = [
+        i for i, seg in enumerate(segments)
+        if (ids is None or seg["id"] in ids)
+        and seg.get("traduction")
+        and est_trop_long(seg, seg["traduction"], source, cible, strategie)
+    ]
+    if not a_traiter:
         return bilan
 
     modele = get_runtime().ollama_model
@@ -183,55 +103,43 @@ def ajuster_segments(
         try:
             fait = 0
             for i, seg in enumerate(segments):
-                action = actions.get(i)
-                if action is None:
+                if i not in a_traiter:
                     resultat.append(seg)
                     continue
 
-                if action == "long":
-                    # 2. Raccourcir la traduction
-                    courte = _raccourcir(client, modele, seg, seg["traduction"], source, cible, strategie)
-                    if courte is not None:
-                        seg["traduction"] = courte
-                        seg["ajustement"] = "raccourcie"
-                        bilan["raccourcies"] += 1
-                        pieces = [seg]
-                    else:
-                        # 3. Redécouper la phrase originale et traduire chaque morceau
-                        morceaux = decouper(seg)
-                        if len(morceaux) > 1:
-                            pieces = _traduire_morceaux(client, modele, seg, morceaux, source, cible, strategie,
-                                                        "decoupee")
-                            bilan["decoupees"] += 1
-                        else:
-                            seg["ajustement"] = "a_revoir"
-                            pieces = [seg]
-                elif action == "caler":
-                    # Phrase longue : un morceau par passage entre deux pauses de la voix d'origine
-                    pieces = _traduire_morceaux(client, modele, seg, decouper(seg), source, cible, strategie, "calee")
-                    bilan["calees"] += 1
+                # 2. Raccourcir la traduction
+                courte = _raccourcir(client, modele, seg, seg["traduction"], source, cible, strategie)
+                if courte is not None:
+                    seg["traduction"] = courte
+                    seg["ajustement"] = "raccourcie"
+                    bilan["raccourcies"] += 1
+                    resultat.append(seg)
                 else:
-                    pieces = [seg]
-
-                # Morceau ou phrase trop courte pour son moment : version un peu plus développée
-                for piece in pieces:
-                    if piece.get("ajustement") == "a_revoir" or not est_trop_court(piece, piece["traduction"], cible):
-                        continue
-                    longue = _allonger(client, modele, piece, piece["traduction"], source, cible, strategie)
-                    if longue is None:
-                        piece["allongement_essaye"] = True  # pas de nouvel essai automatique
-                        continue
-                    piece["traduction"] = longue
-                    if piece.get("ajustement") in ("calee", "decoupee"):
-                        piece["traduction_ia"] = longue
+                    # 3. Redécouper la phrase originale et traduire chaque morceau
+                    morceaux = decouper(seg)
+                    if len(morceaux) > 1:
+                        marquer_fin_max(morceaux, None)
+                        morceaux[-1]["fin_max"] = seg.get("fin_max", seg["fin"])
+                        traduits: list[str] = []
+                        for k, morceau in enumerate(morceaux):
+                            texte = _traduire_segment(client, modele, morceaux, k, source, cible, traduits)
+                            if est_trop_long(morceau, texte, source, cible, strategie):
+                                texte = _raccourcir(client, modele, morceau, texte, source, cible, strategie) or texte
+                            traduits.append(texte)
+                            morceau["traduction"] = texte
+                            morceau["traduction_ia"] = texte
+                            morceau["ajustement"] = "decoupee"
+                            if seg.get("locuteur"):
+                                morceau["locuteur"] = seg["locuteur"]
+                        resultat.extend(morceaux)
+                        bilan["decoupees"] += 1
                     else:
-                        piece["ajustement"] = "allongee"
-                        bilan["allongees"] += 1
-                resultat.extend(pieces)
+                        seg["ajustement"] = "a_revoir"
+                        resultat.append(seg)
 
                 fait += 1
                 if on_progress:
-                    on_progress(fait / len(actions))
+                    on_progress(fait / len(a_traiter))
         finally:
             _decharger_ollama(modele)
 
