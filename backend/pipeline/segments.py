@@ -14,6 +14,7 @@ from pipeline.translate import compter_syllabes, debit
 
 ACCELERATION_MAX = 1.25  # atempo maximal accepté pour la voix doublée (phase 4)
 MARGE_S = 0.1  # respiration conservée avant la phrase suivante
+BABILLAGE_RATIO, BABILLAGE_EXCES_S = 2.2, 1.0  # voix « qui babille » : plus de 2,2 fois sa durée attendue et 1 s de trop
 
 # XTTS v2 parle plus lentement qu'un humain : 4,6 syllabes/s mesurées en allemand, contre
 # 5,97 en moyenne pour la langue, soit ~0,77. On demande donc à XTTS de parler plus vite
@@ -41,6 +42,15 @@ def marquer_fin_max(segments: list[dict[str, Any]], duree_video: float | None) -
 def duree_voix_estimee(traduction: str, cible: str | None, vitesse: float = 1.0) -> float:
     """Durée estimée de la phrase lue par XTTS à la vitesse donnée."""
     return compter_syllabes(traduction) / (debit(cible) * FACTEUR_DEBIT_XTTS * vitesse)
+
+
+def babille(duree: float, traduction: str, cible: str | None, vitesse: float = 1.0) -> bool:
+    """Vrai si une voix générée est bien trop longue pour son texte : XTTS a ajouté des sons après la phrase.
+
+    Mesuré sur un vrai doublage : une voix normale dure 1,1 à 1,6 fois l'estimation, une voix qui babille
+    de 2,3 à 23 fois, avec plus d'une seconde de trop."""
+    attendue = duree_voix_estimee(traduction, cible, vitesse)
+    return duree > BABILLAGE_RATIO * attendue and duree - attendue > BABILLAGE_EXCES_S
 
 
 def vitesse_xtts(seg: dict[str, Any], traduction: str, cible: str | None) -> float:

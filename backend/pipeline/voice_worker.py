@@ -29,7 +29,7 @@ def main(chemin_tache: str) -> None:
     import soundfile as sf
 
     from config import get_runtime, get_settings
-    from pipeline.segments import ACCELERATION_MAX, VITESSE_XTTS_MAX
+    from pipeline.segments import ACCELERATION_MAX, VITESSE_XTTS_MAX, babille
     from pipeline.voice import TAUX, _rogner_silences, fichier_brut  # configure aussi TTS_HOME et les DLL
 
     tache = json.loads(Path(chemin_tache).read_text(encoding="utf-8"))
@@ -78,7 +78,20 @@ def main(chemin_tache: str) -> None:
     for seg in tache["segments"]:
         vitesse = seg["vitesse"]
         temperature = seg.get("temperature", 0.7)  # expressivité selon le ton de la phrase d'origine
-        wav = lire(seg["traduction"], seg["voix"], vitesse, temperature, seg.get("intonation"))
+        # XTTS « babille » parfois après la phrase (sons étranges, syllabes répétées) : une voix bien trop
+        # longue pour son texte est refaite, de plus en plus stable, et la plus courte des prises est gardée
+        essais = []
+        for temperature_essai, intonation in ((temperature, seg.get("intonation")), (0.5, seg.get("intonation")),
+                                              (0.3, None)):
+            essais.append(lire(seg["traduction"], seg["voix"], vitesse, min(temperature, temperature_essai), intonation))
+            if not babille(len(essais[-1]) / TAUX, seg["traduction"], tache["langue"], vitesse):
+                break
+        wav = min(essais, key=len)
+        if babille(len(wav) / TAUX, seg["traduction"], tache["langue"], vitesse):
+            # Toujours trop long : l'accélérer rendrait la voix robotique, le calage coupera le surplus
+            sf.write(fichier_brut(dossier, seg["id"]), wav, TAUX, subtype="PCM_16")
+            print(f"FAIT {seg['id']} {vitesse}", flush=True)
+            continue
         depassement = len(wav) / TAUX / seg["disponible"]
         if depassement > ACCELERATION_MAX and vitesse < VITESSE_XTTS_MAX:
             # Encore trop long : nouvel essai plus rapide, avec une petite marge

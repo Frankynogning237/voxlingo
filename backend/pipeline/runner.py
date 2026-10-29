@@ -409,7 +409,7 @@ def run_translation(job_id: str, ids: set[int] | None = None) -> None:
 
 # ───────────────────────── Phase 4 : voix et export ─────────────────────────
 
-REFERENCE_MIN_LOCUTEUR_S = 3.0  # en dessous, la voix d'un locuteur est trop peu entendue pour la cloner
+REFERENCE_MIN_LOCUTEUR_S = 2.0  # en dessous, la voix d'un locuteur est trop peu entendue pour la cloner
 
 
 def _timbre_du_locuteur(infos: dict) -> dict:
@@ -481,7 +481,8 @@ def _scores_echantillon(job_id: str, code: str, source, phrases: list[dict], pil
 
 
 def _verifier_ressemblance(job_id: str, segments: list[dict], par_locuteur: dict[str, str], voix: dict[int, str],
-                           langue: str, dossier, report: Callable[[float], None]) -> dict[int, float]:
+                           langue: str, dossier, report: Callable[[float], None],
+                           moteur: str | None = None) -> dict[int, float]:
     """Mesure la ressemblance de chaque phrase clonée avec l'échantillon du locuteur ; celles dont le timbre
     a dérivé sont refaites une fois en mode stable, et la meilleure des deux versions est gardée.
 
@@ -530,7 +531,8 @@ def _verifier_ressemblance(job_id: str, segments: list[dict], par_locuteur: dict
         s["stabiliser"] = True
     try:
         try:
-            generer_voix(reprises, langue, voix, dossier, on_progress=_sous_progression(report, 0.2, 0.9))
+            generer_voix(reprises, langue, voix, dossier, on_progress=_sous_progression(report, 0.2, 0.9),
+                         moteur=moteur)
         except VoiceError as exc:
             logger.warning("[%s] Reprise des phrases au timbre dérivé impossible (%s) : versions d'origine gardées",
                            job_id, exc)
@@ -555,7 +557,7 @@ def _verifier_ressemblance(job_id: str, segments: list[dict], par_locuteur: dict
 
 def _do_voices(job_id: str, report: Callable[[float], None]) -> None:
     """Génère chaque phrase traduite avec la voix de son locuteur (seules les phrases modifiées sont refaites)."""
-    from pipeline.voice import Manifeste, generer_voix
+    from pipeline.voice import Manifeste, generer_voix, moteur_voix
 
     status = jobs.read_status(job_id)
     data = jobs.read_segments(job_id)
@@ -572,11 +574,14 @@ def _do_voices(job_id: str, report: Callable[[float], None]) -> None:
     for seg in data["segments"]:  # texte corrigé depuis : la phrase repart en mode normal (expressif)
         if seg.get("stabiliser") and deja.get(str(seg["id"]), {}).get("texte") != seg["traduction"]:
             seg.pop("stabiliser")
+    # Un seul moteur pour toute la génération : sinon Chatterbox, prêt en cours de route sur Kaggle, dirait
+    # les phrases refaites avec une autre voix que les autres
+    moteur = moteur_voix(status["langue_cible"])
     generees = generer_voix(data["segments"], status["langue_cible"], voix, dossier,
-                            on_progress=_sous_progression(report, 0.02, 0.85))
+                            on_progress=_sous_progression(report, 0.02, 0.85), moteur=moteur)
     # Chaque voix clonée doit ressembler à son locuteur : les phrases au timbre dérivé sont refaites
     ressemblances = _verifier_ressemblance(job_id, data["segments"], par_locuteur, voix, status["langue_cible"],
-                                           dossier, _sous_progression(report, 0.85, 1.0))
+                                           dossier, _sous_progression(report, 0.85, 1.0), moteur)
     stabilisees = {s["id"] for s in data["segments"] if s.get("stabiliser")}
     # Voix réellement utilisée pour chaque locuteur : l'interface signale un changement non généré
     data = jobs.read_segments(job_id)
@@ -665,7 +670,7 @@ def _do_export(job_id: str, report: Callable[[float], None]) -> None:
         cale = dossier / f"cale_{seg['id']:05d}.wav"
         niveau = niveau_actif_db(*lire_extrait(voix_isolee, seg["debut"], seg["fin"])) if voix_isolee.is_file() else None
         resultat = caler(fichier_brut(dossier, seg["id"]), cale, seg, gain_volume(seg),
-                         egaliseurs.get(jobs.locuteur(seg)), niveau)
+                         egaliseurs.get(jobs.locuteur(seg)), niveau, status["langue_cible"])
         seg["niveau_origine_db"] = niveau
         seg["gain_db"] = resultat["gain_db"]
         seg["facteur_voix"] = resultat["facteur"]

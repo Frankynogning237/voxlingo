@@ -110,3 +110,45 @@ def test_decoupage_aux_pauses_naturelles() -> None:
     ]
     assert morceaux[0]["debut"] == 7.0
     assert morceaux[-1]["fin"] == round(t, 2)
+
+
+def _bip(chemin: Path, duree: float, taux: int = 24000) -> Path:
+    t = np.arange(int(duree * taux)) / taux
+    sf.write(chemin, (0.3 * np.sin(2 * np.pi * 220 * t)).astype(np.float32), taux)
+    return chemin
+
+
+@pytest.mark.skipif(not __import__("shutil").which("ffmpeg"), reason="FFmpeg absent")
+def test_voix_jamais_sur_la_replique_suivante(tmp_path: Path) -> None:
+    """Une voix encore trop longue après l'accélération maximale est coupée avant la réplique suivante
+    (deux voix en même temps s'entendent comme un écho), avec un fondu final."""
+    from pipeline.align import caler, duree_wav
+
+    seg = {"id": 0, "debut": 0.0, "fin": 1.0, "fin_max": 1.2}
+    resultat = caler(_bip(tmp_path / "brut.wav", 4.0), tmp_path / "cale.wav", seg)
+    assert resultat["coupee"] and resultat["duree"] == pytest.approx(1.2)
+    assert duree_wav(tmp_path / "cale.wav") == pytest.approx(1.2, abs=0.03)
+    fin = sf.read(tmp_path / "cale.wav")[0][-50:]
+    assert np.abs(fin).max() < 0.05  # fondu, pas de coupure sèche
+
+
+@pytest.mark.skipif(not __import__("shutil").which("ffmpeg"), reason="FFmpeg absent")
+def test_voix_qui_tient_n_est_pas_coupee(tmp_path: Path) -> None:
+    from pipeline.align import caler, duree_wav
+
+    seg = {"id": 0, "debut": 0.0, "fin": 1.0, "fin_max": 1.5}
+    resultat = caler(_bip(tmp_path / "brut.wav", 1.6), tmp_path / "cale.wav", seg)
+    assert not resultat["coupee"]
+    assert duree_wav(tmp_path / "cale.wav") == pytest.approx(1.6 / resultat["facteur"], abs=0.03)
+
+
+def test_voix_qui_babille_reperee() -> None:
+    """Valeurs mesurées sur un vrai doublage (projet du 29 octobre)."""
+    from pipeline.segments import babille
+
+    assert babille(7.75, "Noch dein Geschwätz-Zauber.", "de", 1.35)
+    assert babille(3.72, "Ahm.", "de", 1.35)
+    assert babille(4.12, "Warte, was sagst du da?", "de", 1.16)
+    assert not babille(5.57, "Naruto Schatten aufsteigen, eine neue Geschichte, die Fortsetzung von Shippuden.", "de", 1.07)
+    assert not babille(3.27, "Die Fans sagen, ich bin cooler als du.", "de", 1.0)
+    assert not babille(1.31, "Was sagen sie?", "de", 1.0)  # phrase courte, mais rien de trop
