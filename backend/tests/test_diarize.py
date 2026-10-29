@@ -52,3 +52,48 @@ def test_phrase_decoupee_a_chaque_changement_de_locuteur():
     assert [(s["id"], s["locuteur"], s["texte"], s["debut"], s["fin"]) for s in resultat] == [
         (0, "S0", "Tu viens ?", 0.0, 1.0), (1, "S1", "Non merci.", 1.6, 3.0)]
     assert resultat[1]["ton"] == "neutre"
+
+
+def _replique_vue(debut: float, hauteur: float) -> list[dict]:
+    return [{"debut": debut, "fin": debut + 1.0, "f0": hauteur}]
+
+
+def _cas(lignes: list[tuple[float, int, int, float]], pistes: list[tuple[int, list[int]]]):
+    """lignes : (début, voix pyannote, personnage vu, hauteur) ; pistes : (personnage, images à 8 i/s)."""
+    from pipeline.diarize import PERSONNAGE
+
+    mots, repliques = [], []
+    for debut, _, _, hauteur in lignes:
+        repliques.append([len(mots)])
+        mots += _replique_vue(debut, hauteur)
+    vision = {"ips": 8, "pistes": [{"perso": p, "images": images, "machoire": [0.0] * len(images)} for p, images in pistes]}
+    return repliques, mots, [g for _, g, _, _ in lignes], [PERSONNAGE + p for _, _, p, _ in lignes], vision
+
+
+def test_meme_voix_sous_plusieurs_visages_est_une_seule_personne():
+    """Vidéo générée par IA : le père change de visage d'un plan à l'autre mais garde sa voix."""
+    from pipeline.diarize import _regrouper
+
+    lignes = [(0, 1, 0, 108), (10, 1, 1, 130), (20, 1, 10, 106), (30, 1, 2, 115), (40, 4, 8, 150)]
+    pistes = [(0, [0, 8]), (1, [80, 88]), (10, [160]), (2, [240]), (8, [320])]
+    resultat = _regrouper(*_cas(lignes, pistes))
+    assert len(set(resultat[:4])) == 1  # le père : une seule personne
+    assert resultat[4] != resultat[0]  # le fils, autre voix : distinct
+
+
+def test_voix_partagee_par_des_personnages_vus_ensemble_garde_les_visages():
+    """Dessin animé : une seule « voix » pour tous, mais des personnages vus ensemble à l'image."""
+    from pipeline.diarize import _regrouper
+
+    lignes = [(0, 0, 0, 349), (10, 0, 1, 370), (20, 0, 2, 335), (30, 0, 7, 248)]
+    pistes = [(0, [0, 8, 240]), (7, [240]), (1, [80]), (2, [160])]
+    assert len(set(_regrouper(*_cas(lignes, pistes)))) == 4
+
+
+def test_un_visage_a_deux_voix_tres_differentes_reste_deux_personnes():
+    """L'image confond le père et le fils (même visage) : leurs voix les séparent."""
+    from pipeline.diarize import _regrouper
+
+    lignes = [(0, 1, 0, 108), (10, 4, 0, 200)]
+    resultat = _regrouper(*_cas(lignes, [(0, [0, 80])]))
+    assert resultat[0] != resultat[1]

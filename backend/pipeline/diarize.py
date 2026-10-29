@@ -398,8 +398,10 @@ def _etiquette(tours: list[tuple[float, float, str]], debut: float, fin: float) 
 
 
 PERSONNAGE = 1000  # groupes « vus » : PERSONNAGE + numéro du personnage à l'image
+AUTRE_PERSONNE = 100000  # personne distincte confondue à l'image avec une autre (pas de vignette propre)
 COUVERTURE_MIN_VISION = 0.2  # part de la parole où l'image désigne qui parle, pour lui faire confiance
 PART_MIN_ASSOCIATION = 0.2  # une voix est associée aux personnages vus la prononcer sur ≥ 20 % de son temps
+ECART_HAUTEUR_PERSONNE = 0.35  # écart de hauteur (octave, ≈ 27 %) au-delà duquel deux voix sont deux personnes
 
 
 def _dans_la_scene(vision: dict[str, Any], debut: float, fin: float, groupe: int, hauteur: float | None,
@@ -472,6 +474,91 @@ def _avec_vision(mots: list[dict[str, Any]], repliques: list[list[int]], groupe_
     return resultat
 
 
+def _vus_ensemble(vision: dict[str, Any]) -> set[tuple[int, int]]:
+    """Paires de personnages à l'image en même temps (donc forcément deux personnes différentes)."""
+    images: dict[int, set[int]] = {}
+    for piste in vision["pistes"]:
+        images.setdefault(piste["perso"], set()).update(piste["images"])
+    persos = sorted(images)
+    return {(a, b) for i, a in enumerate(persos) for b in persos[i + 1:] if images[a] & images[b]}
+
+
+def _regrouper(repliques: list[list[int]], mots: list[dict[str, Any]], groupe_audio: list[int],
+               avec_vision: list[int], vision: dict[str, Any]) -> list[int]:
+    """Corrige les personnages trouvés à l'image avec la voix entendue.
+
+    Une même personne peut changer de visage d'un plan à l'autre (lumière, tenue, vidéo générée par
+    IA) et deux personnes se ressembler. Chaque réplique est rangée selon sa voix (pyannote) et son
+    personnage, puis : un même personnage à deux voix de hauteurs franchement différentes reste deux
+    personnes ; deux personnages de la même voix et de même hauteur, jamais à l'image ensemble, sont
+    une seule personne ; deux personnages vus ensemble restent toujours distincts. Une voix dont deux
+    personnages ont été vus ensemble est partagée (voix de synthèse, dessin animé) : les visages
+    l'emportent alors."""
+    durees = [mots[r[-1]]["fin"] - mots[r[0]]["debut"] for r in repliques]
+    cles = [(g, f - PERSONNAGE if f >= PERSONNAGE else None) for g, f in zip(groupe_audio, avec_vision, strict=True)]
+    hauteur = {c: _mediane_f0([mots[k] for r, cr in zip(repliques, cles, strict=True) if cr == c for k in r])
+               for c in set(cles)}
+    ensemble = _vus_ensemble(vision)
+    # Une voix prononcée par deux personnages vus ensemble à l'image est partagée (voix de synthèse,
+    # dessin animé) : elle ne prouve pas que ses personnages sont une même personne
+    visages_de = {}
+    for g, p in cles:
+        if p is not None:
+            visages_de.setdefault(g, set()).add(p)
+    voix_partagees = {g for g, ps in visages_de.items()
+                      if any((min(x, y), max(x, y)) in ensemble for x in ps for y in ps if x != y)}
+    parent = {c: c for c in set(cles)}
+
+    def racine(c):
+        while parent[c] != c:
+            c = parent[c]
+        return c
+
+    def proches(a, b) -> bool:
+        ha, hb = hauteur[a], hauteur[b]
+        return bool(ha and hb and abs(np.log2(ha / hb)) <= ECART_HAUTEUR_PERSONNE)
+
+    def compatibles(a, b) -> bool:
+        """Les deux ensembles peuvent-ils être la même personne ? Jamais si deux de leurs personnages
+        ont été vus à l'image en même temps."""
+        pa = {p for c in parent if racine(c) == a and (p := c[1]) is not None}
+        pb = {p for c in parent if racine(c) == b and (p := c[1]) is not None}
+        return not any((min(x, y), max(x, y)) in ensemble for x in pa for y in pb if x != y)
+
+    poids = {c: sum(d for d, cr in zip(durees, cles, strict=True) if cr == c) for c in parent}
+    for a in sorted(parent, key=lambda c: -poids[c]):  # les plus présents d'abord
+        for b in sorted(parent, key=lambda c: -poids[c]):
+            ra, rb = racine(a), racine(b)
+            if ra == rb or not proches(a, b):
+                continue
+            meme_voix = a[0] == b[0] and a[0] not in voix_partagees
+            meme_visage = a[1] is not None and a[1] == b[1]
+            if (meme_voix or meme_visage) and compatibles(ra, rb):
+                parent[rb] = ra
+    # Chaque personne garde le visage qui la montre le plus ; un visage déjà pris par une autre personne
+    # (deux personnes confondues à l'image) n'est pas réutilisé
+    etiquette: dict[tuple, int] = {}
+    pris: set[int] = set()
+    for r in sorted({racine(c) for c in parent}, key=lambda r: -sum(poids[c] for c in parent if racine(c) == r)):
+        visages: dict[int, float] = {}
+        for c in parent:
+            if racine(c) == r and c[1] is not None:
+                visages[c[1]] = visages.get(c[1], 0.0) + poids[c]
+        libres = [p for p in sorted(visages, key=lambda p: -visages[p]) if p not in pris]
+        if libres:
+            pris.add(libres[0])
+            etiquette[r] = PERSONNAGE + libres[0]
+        elif visages:
+            etiquette[r] = AUTRE_PERSONNE + len(etiquette)  # même visage qu'une autre personne, autre voix
+        else:
+            etiquette[r] = r[0]  # jamais vue à l'image : sa voix seule
+    resultat = [etiquette[racine(c)] for c in cles]
+    avant, apres = len(set(avec_vision)), len(set(resultat))
+    if apres != avant:
+        logger.info("Voix et visages recoupés : %d personnage(s) au lieu de %d", apres, avant)
+    return resultat
+
+
 def identifier_locuteurs(
     segments: list[dict[str, Any]],
     audio: Path,
@@ -503,7 +590,8 @@ def identifier_locuteurs(
         repliques = _repliques(mots)
         groupe_replique = _attribuer(mots, repliques, _empreintes(audio, mots, repliques, progression))
     if vision and vision.get("personnages"):
-        groupe_replique = _avec_vision(mots, repliques, groupe_replique, vision)
+        vue = _avec_vision(mots, repliques, groupe_replique, vision)
+        groupe_replique = _regrouper(repliques, mots, groupe_replique, vue, vision) if vue is not groupe_replique else vue
     groupe_mot = [0] * len(mots)
     for replique, g in zip(repliques, groupe_replique, strict=True):
         for k in replique:
@@ -514,7 +602,7 @@ def identifier_locuteurs(
     for g in groupe_mot:
         ordre.setdefault(g, f"SPEAKER_{len(ordre):02d}")
     code_mot = [ordre[g] for g in groupe_mot]
-    perso_du_code = {code: g - PERSONNAGE for g, code in ordre.items() if g >= PERSONNAGE}
+    perso_du_code = {code: g - PERSONNAGE for g, code in ordre.items() if PERSONNAGE <= g < AUTRE_PERSONNE}
 
     if decouper:
         segments[:] = _decouper(segments, mots, code_mot)
