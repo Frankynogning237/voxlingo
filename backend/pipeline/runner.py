@@ -576,7 +576,12 @@ def _do_voices(job_id: str, report: Callable[[float], None]) -> None:
             seg.pop("stabiliser")
     # Un seul moteur pour toute la génération : sinon Chatterbox, prêt en cours de route sur Kaggle, dirait
     # les phrases refaites avec une autre voix que les autres
-    moteur = moteur_voix(status["langue_cible"])
+    def patienter() -> None:
+        jobs.check_cancelled(job_id)
+        jobs.update_status(job_id, attente="Installation de Chatterbox, la voix la plus fidèle…")
+
+    moteur = moteur_voix(status["langue_cible"], patienter)
+    jobs.update_status(job_id, attente=None)
     generees = generer_voix(data["segments"], status["langue_cible"], voix, dossier,
                             on_progress=_sous_progression(report, 0.02, 0.85), moteur=moteur)
     # Chaque voix clonée doit ressembler à son locuteur : les phrases au timbre dérivé sont refaites

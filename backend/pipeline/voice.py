@@ -48,6 +48,8 @@ REFERENCE_MIN_S = 6.0
 REFERENCE_CIBLE_S = 12.0  # durée visée : XTTS affine son empreinte jusqu'à ~30 s, Chatterbox lit le début
 REFERENCE_MAX_S = 18.0
 SEUIL_SILENCE = 0.01  # amplitude sous laquelle le début et la fin sont considérés silencieux
+ATTENTE_CHATTERBOX_S = 20 * 60  # installation en arrière-plan sur Kaggle (≈ 5 à 10 min) : on l'attend
+SONDAGE_CHATTERBOX_S = 15.0
 
 
 class VoiceError(RuntimeError):
@@ -265,8 +267,21 @@ def chatterbox_disponible() -> bool:
     return _chatterbox_pret
 
 
-def moteur_voix(langue: str) -> str:
-    """« chatterbox » ou « xtts », selon le réglage, la langue et ce qui est installé."""
+def chatterbox_en_installation() -> bool:
+    """Vrai si Chatterbox est en cours d'installation (Kaggle/Colab : son dossier existe, pas encore « .pret »)."""
+    python = get_settings().chatterbox_python
+    if not python:
+        return False
+    racine = Path(python).parent.parent
+    return racine.is_dir() and not (racine / ".pret").is_file()
+
+
+def moteur_voix(langue: str, patienter: Callable[[], None] | None = None) -> str:
+    """« chatterbox » ou « xtts », selon le réglage, la langue et ce qui est installé.
+
+    Avec `patienter` (appelé régulièrement pendant l'attente) : si Chatterbox s'installe encore, on
+    l'attend (au plus ATTENTE_CHATTERBOX_S) au lieu de passer à XTTS, nettement moins fidèle à la voix
+    d'origine (ressemblance mesurée 0,45 contre 0,56 sur la même vidéo)."""
     from config import lire_parametres
 
     choix = lire_parametres().get("moteur_voix", "auto")
@@ -274,6 +289,16 @@ def moteur_voix(langue: str) -> str:
         return "xtts"
     if chatterbox_disponible():
         return "chatterbox"
+    if patienter is not None and chatterbox_en_installation():
+        logger.info("Chatterbox s'installe encore : la génération des voix l'attend (au plus %d min)",
+                    ATTENTE_CHATTERBOX_S // 60)
+        fin = time.monotonic() + ATTENTE_CHATTERBOX_S
+        while time.monotonic() < fin and chatterbox_en_installation():
+            patienter()  # annulation possible, et le projet donne signe de vie
+            time.sleep(SONDAGE_CHATTERBOX_S)
+        if chatterbox_disponible():
+            return "chatterbox"
+        logger.warning("Chatterbox n'a pas pu être installé : XTTS v2 est utilisé.")
     if choix == "chatterbox":
         logger.warning("Chatterbox demandé mais pas encore installé : XTTS v2 est utilisé.")
     return "xtts"
